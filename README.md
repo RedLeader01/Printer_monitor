@@ -57,6 +57,114 @@ Az aktuális adatok JSON-formátumban is elérhetők:
 http://SZERVER_IP:8080/api
 ```
 
+## Futtatás Windows alatt WSL-lel
+
+Telepíts egy Ubuntu WSL-disztribúciót Windows PowerShellből, ha még nincs telepítve:
+
+```powershell
+wsl --install -d Ubuntu
+```
+
+Indítsd el az Ubuntut, majd a WSL-terminálban telepítsd a szükséges csomagokat:
+
+```bash
+sudo apt update
+sudo apt install python3 snmp
+```
+
+Tedd a `printer_monitor.py` fájlt a WSL saját fájlrendszerébe, például a `~/printer-monitor` könyvtárba, állítsd be a nyomtatókat a [Beállítás](#beállítás) rész szerint, majd indítsd el:
+
+```bash
+cd ~/printer-monitor
+python3 printer_monitor.py
+```
+
+Windows böngészőből általában a `http://localhost:8080` címen érhető el a felület, amíg a program fut. Ha nem nyílik meg, ellenőrizd, hogy a WSL-ben fut-e a program, a Windows tűzfal nem blokkolja-e a kapcsolatot, és az adott WSL hálózati mód támogatja-e a localhost porttovábbítást. A WSL-nek a nyomtatók IP-címeit is el kell érnie; ezt a WSL-terminálból például az `snmpwalk` paranccsal ellenőrizheted.
+
+## Futtatás Linux szerveren
+
+Debian vagy Ubuntu szerveren telepítsd a Python 3-at és az `snmpwalk` parancsot:
+
+```bash
+sudo apt update
+sudo apt install python3 snmp
+```
+
+Helyezd a programot például az `/opt/printer-monitor` könyvtárba, és módosítsd benne a nyomtatók adatait. Indítás előtti hálózati próbaként futtasd le az alábbi parancsot; a címet és a közösségnevet igazítsd a saját nyomtatódhoz:
+
+```bash
+snmpwalk -v2c -c public -t 2 -r 1 -Oqn 192.168.1.101 1.3.6.1.2.1.43.11.1.1.6
+```
+
+Kézi indítás és teszt:
+
+```bash
+cd /opt/printer-monitor
+python3 printer_monitor.py
+```
+
+A tartós, automatikus indításhoz hozz létre egy `systemd` szolgáltatást. Az alábbi példában az útvonal `/opt/printer-monitor/printer_monitor.py`; ha máshová telepítetted, módosítsd az útvonalakat.
+
+```bash
+sudo nano /etc/systemd/system/printer-monitor.service
+```
+
+Illeszd be a következőt:
+
+```ini
+[Unit]
+Description=Nyomtatófigyelő
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/printer-monitor
+ExecStart=/usr/bin/python3 /opt/printer-monitor/printer_monitor.py
+Restart=on-failure
+RestartSec=10
+EnvironmentFile=-/etc/printer-monitor.env
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Engedélyezd és indítsd el a szolgáltatást:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now printer-monitor
+sudo systemctl status printer-monitor
+```
+
+A napló megtekintése:
+
+```bash
+sudo journalctl -u printer-monitor -f
+```
+
+Telegram használatához hozd létre az opcionális környezeti fájlt:
+
+```bash
+sudo nano /etc/printer-monitor.env
+```
+
+Tartalma:
+
+```text
+TELEGRAM_TOKEN=123456:ABC...
+TELEGRAM_CHAT_ID=-100123456
+```
+
+Korlátozd a fájl olvasását, majd indítsd újra a szolgáltatást:
+
+```bash
+sudo chmod 600 /etc/printer-monitor.env
+sudo systemctl restart printer-monitor
+```
+
+A felület a szerver IP-címén, például a `http://192.168.1.10:8080` címen érhető el. A tűzfalon csak a megbízható belső hálózat felől engedélyezd a `8080`-as portot; a webkiszolgáló nem nyújt hitelesítést vagy titkosított kapcsolatot.
+
 ## Telegram-értesítések
 
 Opcionálisan Telegram-üzenet küldhető, amikor egy nyomtatónál új probléma jelenik meg. Ehhez hozz létre egy botot, és állítsd be a bot tokent, valamint a célcsevegés azonosítóját környezeti változóként.
