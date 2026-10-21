@@ -4,9 +4,9 @@ h1 { font-size: 20px; margin: 0 0 6px; }
 .status { font-size: 12px; color: #777; margin-bottom: 10px; }
 .status.err { color: #b00; font-weight: bold; }
 
-.g { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; align-items: start; }
+.g { column-width: 300px; column-gap: 12px; }
 
-.c { background: #fff; border-left: 6px solid #2a2; border-radius: 6px; padding: 10px 14px; }
+.c { background: #fff; border-left: 6px solid #2a2; border-radius: 6px; padding: 10px 14px; margin-bottom: 12px; break-inside: avoid; }
 .c.warn { border-color: #e90; }
 .c.bad { border-color: #d33; }
 h2 { margin: 0 0 4px; font-size: 18px; }
