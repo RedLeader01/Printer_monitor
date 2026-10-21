@@ -1,19 +1,24 @@
 #!/usr/bin/env python3
 """
-Nyomtató figyelő - SNMP alapú, egyetlen fájl, csak a Python standard könyvtárát használja.
+Nyomtató figyelő - SNMP alapú, EGYETLEN fájl, semmit nem kell hozzá telepíteni
+(csak Python 3.8+). Windowson és Linuxon is fut.
 
-Követelmény:  sudo apt install snmp      (az snmpwalk parancs kell hozzá)
-Indítás:      python3 printer_monitor.py
-Megnyitás:    http://SZERVER_IP:8080
+Gyors teszt egy nyomtatóra (nem indít webszervert):
+    python printer_monitor.py test Nyomtato_IP
+
+Figyelő indítása:
+    python printer_monitor.py
+    -> böngészőben: http://localhost:8080
 
 Opcionális Telegram értesítés (csak változáskor küld):
-    export TELEGRAM_TOKEN="123:ABC"
-    export TELEGRAM_CHAT_ID="-100123456"
+    TELEGRAM_TOKEN és TELEGRAM_CHAT_ID környezeti változó
 """
 import html
 import json
 import os
-import subprocess
+import random
+import socket
+import sys
 import threading
 import time
 import urllib.parse
@@ -23,17 +28,19 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 # ----------------------------- BEÁLLÍTÁSOK -----------------------------
 PRINTERS = [
     # (név, IP)  - írd át a sajátjaidra
-    ("Lexmark 1", "192.168.1.101"),
-    ("Lexmark 2", "192.168.1.102"),
-    ("Lexmark 3", "192.168.1.103"),
-    ("Lexmark 4", "192.168.1.104"),
-    ("Xerox 1", "192.168.1.105"),
-    ("Xerox 2", "192.168.1.106"),
+    ("dummy1", "192.168.1.100"),
+    ("dummy2", "192.168.1.101"),
+    ("dummy3", "192.168.1.102"),
+    ("dummy4", "192.168.1.103"),
+    ("dummy5", "192.168.1.104"),
+    ("dummy6", "192.168.1.105"),
+    ("dummy7", "192.168.1.106"),
 ]
 COMMUNITY = "public"
-POLL_SECONDS = 300      # milyen gyakran kérdezze le a nyomtatókat
+POLL_SECONDS = 30      # milyen gyakran kérdezze le a nyomtatókat
 WARN_PCT = 20           # sárga: ennyi % alatt
 CRIT_PCT = 10           # piros: ennyi % alatt
+HTTP_HOST = "127.0.0.1"  # csak ezen a gépen érhető el; mások számára: "0.0.0.0"
 HTTP_PORT = 8080
 # -----------------------------------------------------------------------
 
@@ -47,27 +54,143 @@ OID_PRINTER_STATUS = "1.3.6.1.2.1.25.3.5.1.1"
 PRINTER_STATUS = {1: "egyéb", 2: "ismeretlen", 3: "készenlét", 4: "nyomtat", 5: "bemelegít"}
 SEVERITY = {1: "info", 3: "KRITIKUS", 4: "figyelmeztetés", 5: "figyelmeztetés"}
 
-state = {}            # név -> utolsó eredmény
+
+# ------------------- minimális SNMP v2c kliens (BER) -------------------
+def _len(n):
+    if n < 128:
+        return bytes([n])
+    b = n.to_bytes((n.bit_length() + 7) // 8, "big")
+    return bytes([0x80 | len(b)]) + b
+
+
+def _tlv(tag, body):
+    return bytes([tag]) + _len(len(body)) + body
+
+
+def _int(n):
+    size = max(1, (n.bit_length() + 8) // 8)
+    return _tlv(0x02, n.to_bytes(size, "big", signed=True))
+
+
+def _oid(s):
+    a = [int(x) for x in s.strip(".").split(".")]
+    body = bytearray([40 * a[0] + a[1]])
+    for x in a[2:]:
+        chunk = [x & 0x7F]
+        x >>= 7
+        while x:
+            chunk.append(0x80 | (x & 0x7F))
+            x >>= 7
+        body += bytes(reversed(chunk))
+    return _tlv(0x06, bytes(body))
+
+
+def _oid_str(b):
+    out = [b[0] // 40, b[0] % 40]
+    v = 0
+    for c in b[1:]:
+        v = (v << 7) | (c & 0x7F)
+        if not c & 0x80:
+            out.append(v)
+            v = 0
+    return ".".join(map(str, out))
+
+
+def _read(buf, pos):
+    tag = buf[pos]
+    n = buf[pos + 1]
+    pos += 2
+    if n & 0x80:
+        k = n & 0x7F
+        n = int.from_bytes(buf[pos:pos + k], "big")
+        pos += k
+    return tag, buf[pos:pos + n], pos + n
+
+
+def _value(tag, val):
+    if tag == 0x02:
+        return int.from_bytes(val, "big", signed=True)
+    if tag in (0x41, 0x42, 0x43, 0x46):
+        return int.from_bytes(val, "big")
+    if tag == 0x04:
+        try:
+            return val.decode("utf-8")
+        except UnicodeDecodeError:
+            return val.decode("latin-1")
+    if tag == 0x06:
+        return _oid_str(val)
+    return None
+
+
+def _parse_response(data):
+    _, msg, _ = _read(data, 0)
+    _, _, p = _read(msg, 0)        # verzió
+    _, _, p = _read(msg, p)        # community
+    tag, pdu, _ = _read(msg, p)
+    if tag != 0xA2:
+        raise ValueError("nem válasz PDU")
+    _, rid, p = _read(pdu, 0)
+    _, es, p = _read(pdu, p)
+    _, _, p = _read(pdu, p)
+    _, vbl, _ = _read(pdu, p)
+    _, vb, _ = _read(vbl, 0)
+    _, oidb, p = _read(vb, 0)
+    vtag, val, _ = _read(vb, p)
+    return (int.from_bytes(rid, "big", signed=True),
+            int.from_bytes(es, "big", signed=True),
+            _oid_str(oidb), vtag, _value(vtag, val))
+
+
+def _getnext_packet(community, oid, rid):
+    varbind = _tlv(0x30, _oid(oid) + b"\x05\x00")
+    pdu = _tlv(0xA1, _int(rid) + _int(0) + _int(0) + _tlv(0x30, varbind))
+    return _tlv(0x30, _int(1) + _tlv(0x04, community.encode()) + pdu)
+
+
+def walk(ip, oid, port=161, timeout=2.0, retries=1):
+    """SNMP walk -> {index-utótag: érték}. Nincs válasz esetén RuntimeError."""
+    base = oid.strip(".")
+    prefix = base + "."
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.settimeout(timeout)
+    out, cur = {}, base
+    try:
+        for _ in range(500):
+            rid = random.randint(1, 2 ** 30)
+            packet = _getnext_packet(COMMUNITY, cur, rid)
+            resp = None
+            for _try in range(retries + 1):
+                sock.sendto(packet, (ip, port))
+                try:
+                    while True:
+                        data, _ = sock.recvfrom(65535)
+                        try:
+                            r = _parse_response(data)
+                        except Exception:
+                            continue
+                        if r[0] == rid:
+                            resp = r
+                            break
+                except socket.timeout:
+                    pass
+                if resp:
+                    break
+            if not resp:
+                raise RuntimeError("nincs SNMP válasz (időtúllépés) - SNMP be van kapcsolva? jó az IP/community?")
+            _, es, noid, vtag, val = resp
+            if es != 0 or vtag >= 0x80 or not noid.startswith(prefix) or noid == cur:
+                break
+            out[noid[len(prefix):]] = val
+            cur = noid
+    finally:
+        sock.close()
+    return out
+
+
+# ----------------------------- figyelő logika --------------------------
+state = {}
 state_lock = threading.Lock()
-last_issues = {}      # név -> előző problémák halmaza (értesítéshez)
-
-
-def walk(ip, oid):
-    """snmpwalk -> {indexek: érték}. Hiba/timeout esetén kivételt dob."""
-    cmd = ["snmpwalk", "-v2c", "-c", COMMUNITY, "-t", "2", "-r", "1", "-Oqn", ip, oid]
-    out = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-    if out.returncode != 0 and not out.stdout.strip():
-        raise RuntimeError(out.stderr.strip() or "nincs SNMP válasz")
-    result = {}
-    prefix = "." + oid + "."
-    for line in out.stdout.splitlines():
-        if " " not in line:
-            continue
-        key, val = line.split(" ", 1)
-        if not key.startswith(prefix):
-            continue
-        result[key[len(prefix):]] = val.strip().strip('"')
-    return result
+last_issues = {}
 
 
 def to_int(v):
@@ -92,12 +215,12 @@ def poll(name, ip):
             if l is not None and l >= 0:
                 if m is not None and m > 0:
                     pct = round(l * 100 / m)
-                elif m == -2 and l <= 100:       # a max ismeretlen, a szint már %
+                elif m == -2 and l <= 100:       # max ismeretlen, a szint már %
                     pct = l
             note = ""
             if l == -3:
                 note = "van még (pontos szint nem ismert)"
-            elif l == -2 or (pct is None and l is None):
+            elif pct is None:
                 note = "ismeretlen"
             res["supplies"].append({"name": d, "pct": pct, "note": note})
 
@@ -162,6 +285,7 @@ def poll_loop():
         time.sleep(POLL_SECONDS)
 
 
+# ------------------------------ weboldal --------------------------------
 def color(pct):
     if pct is None:
         return "#888"
@@ -224,7 +348,15 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
 
+def test_one(ip):
+    r = poll(ip, ip)
+    print(json.dumps(r, ensure_ascii=True, indent=2))
+
+
 if __name__ == "__main__":
+    if len(sys.argv) >= 3 and sys.argv[1] == "test":
+        test_one(sys.argv[2])
+        sys.exit(0)
     threading.Thread(target=poll_loop, daemon=True).start()
-    print(f"Fut: http://0.0.0.0:{HTTP_PORT}  (JSON: /api)")
-    ThreadingHTTPServer(("0.0.0.0", HTTP_PORT), Handler).serve_forever()
+    print(f"Fut: http://{HTTP_HOST}:{HTTP_PORT}  (JSON: /api)  - leállítás: Ctrl+C")
+    ThreadingHTTPServer((HTTP_HOST, HTTP_PORT), Handler).serve_forever()
