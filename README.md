@@ -75,7 +75,23 @@ python3 printer_monitor.py
 
 Nyisd meg a böngészőben a `http://localhost:8080` címet. Ha a `HTTP_HOST` értéke `0.0.0.0`, más gépről a `http://A_GEP_IP_CIME:8080` címen érhető el. A leállítás `Ctrl+C`-vel történik.
 
-Az oldal nyomtatónként egy kártyát mutat: állapotot, a kellékanyagok szintjét csíkkal és százalékkal, valamint az aktív hibákat. A kártya színe jelzi a helyzetet (zöld, sárga, piros). A böngészőoldal 60 másodpercenként frissül, de ez csak a már lekért adatot olvassa újra; a nyomtatókat a `POLL_SECONDS` szerint kérdezi le a program, függetlenül ettől. Indulás után az állapotok fokozatosan jelennek meg, ahogy az egyes nyomtatók sorra kerülnek.
+Az oldal nyomtatónként egy kártyát mutat: állapotot, a kellékanyagok szintjét csíkkal és százalékkal, valamint az aktív hibákat. A kártya színe jelzi a helyzetet (zöld, sárga, piros). Az oldal magától, 15 másodpercenként frissül a háttérben, újratöltés nélkül, így a lenyitott menük nyitva maradnak. Ez csak a program által már lekért adatot olvassa újra; a nyomtatókat a `POLL_SECONDS` szerint kérdezi le a program, függetlenül ettől. Indulás után az állapotok fokozatosan jelennek meg, ahogy az egyes nyomtatók sorra kerülnek. (Ha a böngészőben nincs JavaScript, az oldal 60 másodpercenként újratölti magát.)
+
+### Részletek menü
+
+Minden online nyomtató kártyáján van egy lenyitható **Részletek** menü, amely a következőket mutatja, amennyit a nyomtató elárul magáról:
+
+- típus és sorozatszám
+- üzemidő (mióta nem indult újra a nyomtató)
+- papírtálcák állapota (üres / van papír) és a kimeneti tálca állapota (tele / van hely); az üres és a tele tálca pirosan látszik
+- a fogyóanyagok cikkszáma (ha a nyomtató megadja, például a Xeroxnál)
+- a nyomtató saját rendszerleírása (Lexmarknál ebben szokott lenni a firmware-verzió is)
+
+Amit egy típus nem ad meg, az egyszerűen nem jelenik meg. A menü tartalma kizárólag tájékoztató, a Telegram-értesítést nem érinti.
+
+### Hamarosan elfogy lista
+
+Ha bármelyik nyomtatón egy fogyóanyag a `WARN_PCT` érték alá esik, az oldal tetején megjelenik egy sárga **Hamarosan elfogy** doboz. Ebben nyomtatónként látszik a fogyóanyag neve, a szintje és (ha a nyomtató megadja) a cikkszáma, így közvetlenül rendelhető. A doboz magától eltűnik, ha nincs mit rendelni.
 
 Az aktuális adatok JSON-formátumban is elérhetők:
 
@@ -187,7 +203,7 @@ sudo systemctl restart printer-monitor
 - Az SNMP v2c nem titkosítja a forgalmat, a közösségnevet szövegesen küldi. Csak megbízható belső hálózaton használd, és ahol lehet, ne hagyd az alapértelmezett `public` értéket.
 - A webkiszolgáló alapból csak a helyi gépről érhető el (`127.0.0.1`). Ha a `HTTP_HOST` értékét `0.0.0.0`-ra állítod, a felület a hálózaton bárkinek elérhető lesz, mert nincs hitelesítés vagy HTTPS. Ilyenkor tűzfallal korlátozd a `HTTP_PORT` portot a megbízható hálózatra.
 - A nyomtatókat a program egymás után kérdezi le. Az elérhetetlen (offline) nyomtató lekérdezése kb. 4 másodpercet vár az időtúllépésre, ezért sok offline eszköz esetén a teljes kör hosszabb lehet a `POLL_SECONDS` értékénél. Ez a hat-hét nyomtatós használatnál nem okoz gondot.
-- A 30 másodperces lekérdezés a hálózatot és a nyomtatókat gyakorlatilag nem terheli (nyomtatónként néhány tucat apró UDP csomag). A kellékanyagok lassan változnak, de így a hibák gyorsan, 30 másodpercen belül észrevehetők.
+- A 30 másodperces lekérdezés a hálózatot és a nyomtatókat gyakorlatilag nem terheli (nyomtatónként néhány tucat, a Részletek menü adataival együtt kb. 50-60 apró UDP csomag). A kellékanyagok lassan változnak, de így a hibák gyorsan, 30 másodpercen belül észrevehetők.
 - Hibaként a program a nyomtató riasztási tábláját (kritikus és figyelmeztető szint) jeleníti meg. Az információs szintű üzeneteket kihagyja. Ha egy nyomtató egy hibát (például nyomtatófej-hibát) nem ebben a táblában jelez, a `test` paranccsal futtatott lekérdezés kimenetéből derül ki, hol jelenik meg.
 - Ha egy nyomtató nem érhető el, az oldal `OFFLINE` állapotot és a lekérdezési hibát mutatja. A hiányzó vagy nem értelmezhető kellékanyag-szint „ismeretlen” vagy „van még” jelzéssel látszik.
 - A kellékanyagok nevét a nyomtató adja meg, ezért tartalmazhat cikkszámot és sorozatszámot (például `PN 106R03396;SN...`).

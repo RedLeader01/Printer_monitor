@@ -17,6 +17,7 @@ import html
 import json
 import os
 import random
+import re
 import socket
 import sys
 import threading
@@ -37,7 +38,7 @@ PRINTERS = [
     ("dummy7", "192.168.1.106"),
 ]
 COMMUNITY = "public"
-POLL_SECONDS = 30      # milyen gyakran kérdezze le a nyomtatókat
+POLL_SECONDS = 30       # milyen gyakran kérdezze le a nyomtatókat
 WARN_PCT = 20           # sárga: ennyi % alatt
 CRIT_PCT = 10           # piros: ennyi % alatt
 HTTP_HOST = "127.0.0.1"  # csak ezen a gépen érhető el; mások számára: "0.0.0.0"
@@ -50,6 +51,17 @@ OID_SUP_LEVEL = "1.3.6.1.2.1.43.11.1.1.9"
 OID_ALERT_SEV = "1.3.6.1.2.1.43.18.1.1.2"
 OID_ALERT_DESC = "1.3.6.1.2.1.43.18.1.1.8"
 OID_PRINTER_STATUS = "1.3.6.1.2.1.25.3.5.1.1"
+
+# adatlap (Részletek menü)
+OID_SYS_DESCR = "1.3.6.1.2.1.1.1"
+OID_SYS_UPTIME = "1.3.6.1.2.1.1.3"
+OID_DEV_DESCR = "1.3.6.1.2.1.25.3.2.1.3"
+OID_SERIAL = "1.3.6.1.2.1.43.5.1.1.17"
+OID_IN_MAX = "1.3.6.1.2.1.43.8.2.1.9"
+OID_IN_LEVEL = "1.3.6.1.2.1.43.8.2.1.10"
+OID_IN_NAME = "1.3.6.1.2.1.43.8.2.1.13"
+OID_OUT_REMAIN = "1.3.6.1.2.1.43.9.2.1.5"
+OID_OUT_NAME = "1.3.6.1.2.1.43.9.2.1.7"
 
 PRINTER_STATUS = {1: "egyéb", 2: "ismeretlen", 3: "készenlét", 4: "nyomtat", 5: "bemelegít"}
 SEVERITY = {1: "info", 3: "KRITIKUS", 4: "figyelmeztetés", 5: "figyelmeztetés"}
@@ -192,6 +204,9 @@ state = {}
 state_lock = threading.Lock()
 last_issues = {}
 
+_PN_RE = re.compile(r"\bPN\s*([A-Za-z0-9][A-Za-z0-9\-./]*)")
+_MANUAL_RE = re.compile(r"manual|\bmp\b|multi|bypass|kézi|kezi", re.I)
+
 
 def to_int(v):
     try:
@@ -200,9 +215,87 @@ def to_int(v):
         return None
 
 
+def split_supply_name(raw):
+    """'Festékkazetta, PN 106R03396;SN8012...' -> ('Festékkazetta', '106R03396')"""
+    raw = str(raw)
+    m = _PN_RE.search(raw)
+    pn = m.group(1) if m else None
+    name = raw.split(", PN")[0].split(";SN")[0].strip() or raw
+    return name, pn
+
+
+def _idx_key(k):
+    return [int(x) for x in k.split(".") if x.isdigit()]
+
+
+def _first(d):
+    for k in sorted(d, key=_idx_key):
+        if d[k] not in (None, ""):
+            return d[k]
+    return None
+
+
+def tray_state(level, mx, empty_word, ok_word):
+    lv, m = to_int(level), to_int(mx)
+    if lv is None or lv in (-1, -2):
+        return "ismeretlen"
+    if lv == 0:
+        return empty_word
+    if lv == -3:
+        return ok_word
+    if m is not None and m > 0:
+        return f"{round(lv * 100 / m)}%"
+    return ok_word
+
+
+def poll_info(ip):
+    """Extra adatok a Részletek menühöz. Ami nem érhető el, az üresen marad."""
+    info = {"model": None, "serial": None, "uptime": None, "descr": None,
+            "inputs": [], "outputs": []}
+    try:
+        info["descr"] = _first(walk(ip, OID_SYS_DESCR))
+    except Exception:
+        pass
+    try:
+        ticks = to_int(_first(walk(ip, OID_SYS_UPTIME)))
+        if ticks is not None:
+            info["uptime"] = ticks // 100
+    except Exception:
+        pass
+    try:
+        info["model"] = _first(walk(ip, OID_DEV_DESCR))
+    except Exception:
+        pass
+    try:
+        info["serial"] = _first(walk(ip, OID_SERIAL))
+    except Exception:
+        pass
+    try:
+        names = walk(ip, OID_IN_NAME)
+        lv = walk(ip, OID_IN_LEVEL)
+        mx = walk(ip, OID_IN_MAX)
+        for idx in sorted(set(names) | set(lv), key=_idx_key):
+            st = tray_state(lv.get(idx), mx.get(idx), "ÜRES", "van papír")
+            tname = names.get(idx) or f"Tálca {idx}"
+            info["inputs"].append({"name": tname, "state": st,
+                                   "warn": st == "ÜRES" and not _MANUAL_RE.search(str(tname))})
+    except Exception:
+        pass
+    try:
+        names = walk(ip, OID_OUT_NAME)
+        rem = walk(ip, OID_OUT_REMAIN)
+        for idx in sorted(set(names) | set(rem), key=_idx_key):
+            st = tray_state(rem.get(idx), None, "TELE", "van hely")
+            info["outputs"].append({"name": names.get(idx) or f"Kimenet {idx}", "state": st,
+                                    "warn": st == "TELE"})
+    except Exception:
+        pass
+    return info
+
+
 def poll(name, ip):
     res = {"name": name, "ip": ip, "online": False, "status": "-", "supplies": [],
-           "alerts": [], "error": "", "time": time.strftime("%H:%M:%S")}
+           "alerts": [], "info": {}, "error": "", "time": time.strftime("%H:%M:%S")}
     try:
         desc = walk(ip, OID_SUP_DESC)
         mx = walk(ip, OID_SUP_MAX)
@@ -222,7 +315,8 @@ def poll(name, ip):
                 note = "van még (pontos szint nem ismert)"
             elif pct is None:
                 note = "ismeretlen"
-            res["supplies"].append({"name": d, "pct": pct, "note": note})
+            sname, pn = split_supply_name(d)
+            res["supplies"].append({"name": sname, "pn": pn, "pct": pct, "note": note})
 
         try:
             st = walk(ip, OID_PRINTER_STATUS)
@@ -238,6 +332,11 @@ def poll(name, ip):
                 s = SEVERITY.get(to_int(sev.get(idx)), "info")
                 if s != "info":
                     res["alerts"].append({"sev": s, "text": text})
+        except Exception:
+            pass
+
+        try:
+            res["info"] = poll_info(ip)
         except Exception:
             pass
     except Exception as e:
@@ -286,16 +385,91 @@ def poll_loop():
 
 
 # ------------------------------ weboldal --------------------------------
+PAGE_CSS = """
+body{font-family:system-ui,sans-serif;margin:0;padding:12px;background:#f4f4f4}
+.g{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px;align-items:start}
+.c{background:#fff;border-left:6px solid #2a2;border-radius:6px;padding:10px 14px}
+.c.warn{border-color:#e90} .c.bad{border-color:#d33}
+h2{margin:0 0 4px;font-size:18px} small{color:#777;font-weight:normal}
+p{margin:4px 0;color:#555;font-size:13px}
+.row{display:flex;align-items:center;gap:8px;margin:4px 0;font-size:13px}
+.row label{flex:0 0 42%} .bar{flex:1;background:#ddd;height:10px;border-radius:5px;overflow:hidden}
+.bar div{height:100%} .al{color:#b00;font-size:13px;margin-top:4px}
+.order{background:#fff7e0;border-left:6px solid #e90;border-radius:6px;padding:8px 14px;margin-bottom:12px;font-size:14px}
+.order div{margin:3px 0}
+details{margin-top:8px} summary{cursor:pointer;color:#06c;font-size:13px}
+table.info{border-collapse:collapse;font-size:12px;margin-top:6px;width:100%}
+.info th{text-align:left;color:#777;font-weight:normal;padding:2px 10px 2px 0;vertical-align:top;white-space:nowrap}
+.info td{padding:2px 0;word-break:break-word}
+.warnt{color:#b00;font-weight:bold} .descr{color:#777}
+"""
+
+# Az oldal a háttérben frissíti magát, és a nyitott "Részletek" menük nyitva maradnak.
+PAGE_JS = """
+async function refresh(){
+  try{
+    const open=[...document.querySelectorAll('details[open]')].map(d=>d.dataset.k);
+    const r=await fetch('/partial',{cache:'no-store'});
+    if(!r.ok) return;
+    document.getElementById('app').innerHTML=await r.text();
+    document.querySelectorAll('details').forEach(d=>{ if(open.includes(d.dataset.k)) d.open=true; });
+  }catch(e){}
+}
+setInterval(refresh,15000);
+"""
+
+
 def color(pct):
     if pct is None:
         return "#888"
     return "#d33" if pct < CRIT_PCT else "#e90" if pct < WARN_PCT else "#2a2"
 
 
-def render():
-    cards = []
+def fmt_uptime(sec):
+    d, rest = divmod(int(sec), 86400)
+    h, rest = divmod(rest, 3600)
+    m = rest // 60
+    if d:
+        return f"{d} nap {h} óra"
+    if h:
+        return f"{h} óra {m} perc"
+    return f"{m} perc"
+
+
+def info_html(r):
+    i = r.get("info") or {}
+    rows = []
+
+    def row(label, value):
+        if value:
+            rows.append(f"<tr><th>{label}</th><td>{value}</td></tr>")
+
+    esc = html.escape
+    row("Típus", esc(str(i["model"])) if i.get("model") else "")
+    row("Sorozatszám", esc(str(i["serial"])) if i.get("serial") else "")
+    if i.get("uptime") is not None:
+        row("Üzemidő", fmt_uptime(i["uptime"]))
+    if i.get("inputs"):
+        row("Papírtálcák", "".join(
+            f"<div{' class=warnt' if t['warn'] else ''}>{esc(str(t['name']))}: {esc(t['state'])}</div>"
+            for t in i["inputs"]))
+    if i.get("outputs"):
+        row("Kimeneti tálca", "".join(
+            f"<div{' class=warnt' if t['warn'] else ''}>{esc(str(t['name']))}: {esc(t['state'])}</div>"
+            for t in i["outputs"]))
+    pns = [s for s in r["supplies"] if s.get("pn")]
+    if pns:
+        row("Cikkszámok", "".join(f"<div>{esc(s['name'])}: {esc(s['pn'])}</div>" for s in pns))
+    row("Rendszerleírás", f"<span class=descr>{esc(str(i['descr']))}</span>" if i.get("descr") else "")
+    if not rows:
+        return "<p>Nincs elérhető extra adat.</p>"
+    return "<table class=info>" + "".join(rows) + "</table>"
+
+
+def render_inner():
     with state_lock:
         items = [state.get(n) for n, _ in PRINTERS]
+    cards, low = [], []
     for (name, ip), r in zip(PRINTERS, items):
         if r is None:
             cards.append(f"<div class=c><h2>{html.escape(name)}</h2><p>lekérdezés folyamatban…</p></div>")
@@ -313,34 +487,47 @@ def render():
             bar = (f"<div class=bar><div style='width:{p}%;background:{color(p)}'></div></div>"
                    f"<span>{p}%</span>") if p is not None else f"<span>{html.escape(s['note'])}</span>"
             rows += f"<div class=row><label>{html.escape(s['name'])}</label>{bar}</div>"
+            if p is not None and p < WARN_PCT:
+                low.append((name, s))
         al = "".join(f"<div class=al>{html.escape(a['sev'])}: {html.escape(a['text'])}</div>"
                      for a in r["alerts"])
+        details = (f"<details data-k=\"{html.escape(name)}\"><summary>Részletek</summary>"
+                   f"{info_html(r)}</details>")
         cards.append(f"<div class='{cls}'><h2>{html.escape(name)} <small>{ip}</small></h2>"
-                     f"<p>Állapot: {html.escape(r['status'])} · frissítve {r['time']}</p>{rows}{al}</div>")
-    return f"""<!doctype html><html lang=hu><head><meta charset=utf-8>
-<meta name=viewport content="width=device-width,initial-scale=1">
-<meta http-equiv=refresh content=60><title>Nyomtatók</title><style>
-body{{font-family:system-ui,sans-serif;margin:0;padding:12px;background:#f4f4f4}}
-.g{{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px}}
-.c{{background:#fff;border-left:6px solid #2a2;border-radius:6px;padding:10px 14px}}
-.c.warn{{border-color:#e90}} .c.bad{{border-color:#d33}}
-h2{{margin:0 0 4px;font-size:18px}} small{{color:#777;font-weight:normal}}
-p{{margin:4px 0;color:#555;font-size:13px}}
-.row{{display:flex;align-items:center;gap:8px;margin:4px 0;font-size:13px}}
-.row label{{flex:0 0 42%}} .bar{{flex:1;background:#ddd;height:10px;border-radius:5px;overflow:hidden}}
-.bar div{{height:100%}} .al{{color:#b00;font-size:13px;margin-top:4px}}
-</style></head><body><h1 style="font-size:20px">Nyomtatók</h1><div class=g>{''.join(cards)}</div></body></html>"""
+                     f"<p>Állapot: {html.escape(r['status'])} · frissítve {r['time']}</p>"
+                     f"{rows}{al}{details}</div>")
+    order = ""
+    if low:
+        lines = ""
+        for pname, s in low:
+            pn = f" · cikkszám: <b>{html.escape(s['pn'])}</b>" if s.get("pn") else ""
+            lines += f"<div>{html.escape(pname)} – {html.escape(s['name'])} ({s['pct']}%){pn}</div>"
+        order = f"<div class=order><b>Hamarosan elfogy:</b>{lines}</div>"
+    return order + "<div class=g>" + "".join(cards) + "</div>"
+
+
+def render():
+    return ("<!doctype html><html lang=hu><head><meta charset=utf-8>"
+            "<meta name=viewport content=\"width=device-width,initial-scale=1\">"
+            "<noscript><meta http-equiv=refresh content=60></noscript>"
+            "<title>Nyomtatók</title><style>" + PAGE_CSS + "</style></head><body>"
+            "<h1 style=\"font-size:20px\">Nyomtatók</h1><div id=app>" + render_inner() + "</div>"
+            "<script>" + PAGE_JS + "</script></body></html>")
 
 
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
-        if self.path == "/api":
+        path = self.path.split("?")[0]
+        if path == "/api":
             with state_lock:
                 body, ctype = json.dumps(state, ensure_ascii=False).encode(), "application/json"
+        elif path == "/partial":
+            body, ctype = render_inner().encode(), "text/html; charset=utf-8"
         else:
             body, ctype = render().encode(), "text/html; charset=utf-8"
         self.send_response(200)
         self.send_header("Content-Type", ctype)
+        self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(body)
 
