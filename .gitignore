@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+
+# A saját nyomtatók IP-címei és a Telegram-adatok ne kerüljenek a verziókezelésbe.
+# A példa (config.example.ini) viszont igen.
+config.ini
