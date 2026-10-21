@@ -1,47 +1,65 @@
 # Nyomtatófigyelő
 
-Egyszerű, SNMP-alapú nyomtatófigyelő Pythonból. A program rendszeres időközönként lekérdezi a megadott nyomtatók kellékanyag-szintjét, állapotát és riasztásait, majd ezeket egy böngészőből elérhető oldalon jeleníti meg. Külső Python-csomag nem szükséges; az `snmpwalk` parancsnak viszont telepítve és a `PATH`-ban elérhetőnek kell lennie.
+Egyszerű, SNMP-alapú nyomtatófigyelő Pythonból. A program rendszeres időközönként lekérdezi a megadott nyomtatók kellékanyag-szintjét, állapotát és hibáit, majd ezeket egy böngészőből elérhető oldalon jeleníti meg. Új probléma esetén opcionálisan Telegram-értesítést küld.
+
+A program **egyetlen fájl** (`printer_monitor.py`), és a saját SNMP v2c klienst tartalmazza. Ezért **semmit nem kell hozzá telepíteni**: nincs szükség külső Python-csomagra, `snmpwalk` parancsra, WSL-re vagy Net-SNMP-re. Windowson és Linuxon is fut.
 
 ## Követelmények
 
-- Python 3
-- Net-SNMP `snmpwalk` parancs
-- SNMP v2c engedélyezése a nyomtatókon, a beállított közösségnévvel
+- Python 3.8 vagy újabb
+- SNMP v2c engedélyezése a nyomtatókon, a beállított közösségnévvel (alapértelmezés: `public`)
+- UDP 161-es portú elérés a nyomtatók felé a program futtató gépről
 
-Debian vagy Ubuntu rendszeren az `snmpwalk` telepítése:
+A Python verzióját a következő paranccsal ellenőrizheted (Windowson, ha a `python` nem működik, próbáld a `py` indítót):
 
-```bash
-sudo apt update
-sudo apt install snmp
+```powershell
+python --version
 ```
-
-Windows rendszeren telepíts egy Net-SNMP-csomagot, és ellenőrizd, hogy az `snmpwalk.exe` elérhető-e a `PATH`-ból.
 
 ## Beállítás
 
-Nyisd meg a `printer_monitor.py` fájlt, és módosítsd a fájl elején található beállításokat:
+Nyisd meg a `printer_monitor.py` fájlt, és módosítsd a fájl elején lévő beállításokat:
 
 ```python
 PRINTERS = [
-	("Iroda 1", "192.168.1.101"),
-	("Iroda 2", "192.168.1.102"),
+    ("Iroda 1", "192.168.1.101"),
+    ("Iroda 2", "192.168.1.102"),
 ]
 COMMUNITY = "public"
-POLL_SECONDS = 300
+POLL_SECONDS = 30
 WARN_PCT = 20
 CRIT_PCT = 10
+HTTP_HOST = "127.0.0.1"
 HTTP_PORT = 8080
 ```
 
-A `PRINTERS` lista elemei a nyomtató megjelenített nevét és IP-címét tartalmazzák. A `COMMUNITY` értékének egyeznie kell a nyomtató SNMP v2c közösségnevével. A lekérdezési idő másodpercben értendő; az alapérték öt perc. A kellékanyag-szint 20% alatt figyelmeztető, 10% alatt kritikus színnel jelenik meg.
+| Beállítás | Jelentés |
+| --- | --- |
+| `PRINTERS` | A nyomtatók megjelenített neve és IP-címe. A fájlban kezdetben `dummy` példaadatok vannak, ezeket cseréld le a saját nyomtatóidra. |
+| `COMMUNITY` | Az SNMP v2c közösségnév. Egyeznie kell a nyomtatókon beállítottal. |
+| `POLL_SECONDS` | A nyomtatók lekérdezésének gyakorisága másodpercben (alapérték: 30). |
+| `WARN_PCT` | Sárga figyelmeztetés a kellékanyag ennyi százalék alatt (alapérték: 20). |
+| `CRIT_PCT` | Piros jelzés a kellékanyag ennyi százalék alatt (alapérték: 10). |
+| `HTTP_HOST` | Melyik címen figyeljen a weboldal. Az alapérték (`127.0.0.1`) csak a saját gépről engedi az elérést. Hogy más gépekről is látszódjon, állítsd `"0.0.0.0"`-ra. |
+| `HTTP_PORT` | A weboldal portja (alapérték: 8080). |
+
+## Gyors teszt egy nyomtatóra
+
+Mielőtt a teljes figyelőt elindítod, egyetlen nyomtatót ellenőrizhetsz. Ez nem indít webszervert, csak kiírja a lekérdezés eredményét:
+
+```powershell
+python printer_monitor.py test NYOMTATO_IP
+```
+
+Linuxon `python3`-mal indítsd. A kimenet JSON, ahol az ékezetes betűk kódolva jelennek meg (például `készenlét` = „készenlét”); ez csak a teszt kimenetére igaz, a weboldalon normálisan látszanak.
+
+Mire figyelj:
+
+- `"online": true` és kitöltött `supplies` lista: a lekérdezés működik.
+- `"online": false` és `nincs SNMP válasz (időtúllépés)` hiba: az SNMP nincs bekapcsolva a nyomtatón, rossz az IP-cím vagy a közösségnév, vagy egy tűzfal blokkolja az UDP 161-es portot.
+- Egy kellékanyagnál a `note` mezőben szereplő „van még (pontos szint nem ismert)” azt jelenti, hogy a nyomtató nem ad pontos százalékot (ez gyakori például a Xerox továbbítóhengernél és beégetőnél). Erre a program nem küld riasztást.
 
 ## Indítás és használat
-
-Linuxon vagy macOS-en:
-
-```bash
-python3 printer_monitor.py
-```
 
 Windows PowerShellben:
 
@@ -49,57 +67,58 @@ Windows PowerShellben:
 python printer_monitor.py
 ```
 
-Nyisd meg a `http://SZERVER_IP:8080` címet, ahol a `SZERVER_IP` annak a gépnek az IP-címe, amelyen a program fut. A böngészőoldal 60 másodpercenként frissül; a nyomtatók lekérdezési gyakoriságát ettől függetlenül a `POLL_SECONDS` szabályozza. Indulás után az állapotok fokozatosan, a nyomtatók lekérdezésével jelennek meg.
+Linuxon vagy macOS-en:
+
+```bash
+python3 printer_monitor.py
+```
+
+Nyisd meg a böngészőben a `http://localhost:8080` címet. Ha a `HTTP_HOST` értéke `0.0.0.0`, más gépről a `http://A_GEP_IP_CIME:8080` címen érhető el. A leállítás `Ctrl+C`-vel történik.
+
+Az oldal nyomtatónként egy kártyát mutat: állapotot, a kellékanyagok szintjét csíkkal és százalékkal, valamint az aktív hibákat. A kártya színe jelzi a helyzetet (zöld, sárga, piros). A böngészőoldal 60 másodpercenként frissül, de ez csak a már lekért adatot olvassa újra; a nyomtatókat a `POLL_SECONDS` szerint kérdezi le a program, függetlenül ettől. Indulás után az állapotok fokozatosan jelennek meg, ahogy az egyes nyomtatók sorra kerülnek.
 
 Az aktuális adatok JSON-formátumban is elérhetők:
 
 ```text
-http://SZERVER_IP:8080/api
+http://localhost:8080/api
 ```
 
-## Futtatás Windows alatt WSL-lel
+## Telegram-értesítések
 
-Telepíts egy Ubuntu WSL-disztribúciót Windows PowerShellből, ha még nincs telepítve:
+Opcionálisan Telegram-üzenet küldhető, amikor egy nyomtatónál új probléma jelenik meg (kevés kellékanyag, hiba, vagy a nyomtató elérhetetlenné válik). Ehhez hozz létre egy Telegram-botot, majd állítsd be a bot tokent és a célcsevegés azonosítóját környezeti változóként.
+
+Windows PowerShellben:
 
 ```powershell
-wsl --install -d Ubuntu
+$env:TELEGRAM_TOKEN = "123456:ABC..."
+$env:TELEGRAM_CHAT_ID = "-100123456"
+python printer_monitor.py
 ```
 
-Indítsd el az Ubuntut, majd a WSL-terminálban telepítsd a szükséges csomagokat:
+Linuxon vagy macOS-en:
 
 ```bash
-sudo apt update
-sudo apt install python3 snmp
-```
-
-Tedd a `printer_monitor.py` fájlt a WSL saját fájlrendszerébe, például a `~/printer-monitor` könyvtárba, állítsd be a nyomtatókat a [Beállítás](#beállítás) rész szerint, majd indítsd el:
-
-```bash
-cd ~/printer-monitor
+export TELEGRAM_TOKEN="123456:ABC..."
+export TELEGRAM_CHAT_ID="-100123456"
 python3 printer_monitor.py
 ```
 
-Windows böngészőből általában a `http://localhost:8080` címen érhető el a felület, amíg a program fut. Ha nem nyílik meg, ellenőrizd, hogy a WSL-ben fut-e a program, a Windows tűzfal nem blokkolja-e a kapcsolatot, és az adott WSL hálózati mód támogatja-e a localhost porttovábbítást. A WSL-nek a nyomtatók IP-címeit is el kell érnie; ezt a WSL-terminálból például az `snmpwalk` paranccsal ellenőrizheted.
+Ha valamelyik változó hiányzik, az értesítések csak a program konzoljára kerülnek. A program csak az **újonnan** észlelt problémákról küld üzenetet, nem ismétli azokat minden lekérdezéskor. Ha egy probléma megszűnik, majd később újra megjelenik, az új értesítést eredményez.
 
 ## Futtatás Linux szerveren
 
-Debian vagy Ubuntu szerveren telepítsd a Python 3-at és az `snmpwalk` parancsot:
+Ez akkor hasznos, ha a figyelőnek folyamatosan, a háttérben kell futnia. Debian vagy Ubuntu szerveren elég a Python 3 (az SNMP-hez nem kell további csomag):
 
 ```bash
 sudo apt update
-sudo apt install python3 snmp
+sudo apt install python3
 ```
 
-Helyezd a programot például az `/opt/printer-monitor` könyvtárba, és módosítsd benne a nyomtatók adatait. Indítás előtti hálózati próbaként futtasd le az alábbi parancsot; a címet és a közösségnevet igazítsd a saját nyomtatódhoz:
-
-```bash
-snmpwalk -v2c -c public -t 2 -r 1 -Oqn 192.168.1.101 1.3.6.1.2.1.43.11.1.1.6
-```
-
-Kézi indítás és teszt:
+Helyezd a programot például az `/opt/printer-monitor` könyvtárba, módosítsd benne a nyomtatók adatait, és ha más gépekről is el kell érni az oldalt, állítsd a `HTTP_HOST` értékét `"0.0.0.0"`-ra. Kézi indítás és teszt:
 
 ```bash
 cd /opt/printer-monitor
+python3 printer_monitor.py test 192.168.1.101
 python3 printer_monitor.py
 ```
 
@@ -163,33 +182,12 @@ sudo chmod 600 /etc/printer-monitor.env
 sudo systemctl restart printer-monitor
 ```
 
-A felület a szerver IP-címén, például a `http://192.168.1.10:8080` címen érhető el. A tűzfalon csak a megbízható belső hálózat felől engedélyezd a `8080`-as portot; a webkiszolgáló nem nyújt hitelesítést vagy titkosított kapcsolatot.
-
-## Telegram-értesítések
-
-Opcionálisan Telegram-üzenet küldhető, amikor egy nyomtatónál új probléma jelenik meg. Ehhez hozz létre egy botot, és állítsd be a bot tokent, valamint a célcsevegés azonosítóját környezeti változóként.
-
-Linuxon vagy macOS-en:
-
-```bash
-export TELEGRAM_TOKEN="123456:ABC..."
-export TELEGRAM_CHAT_ID="-100123456"
-python3 printer_monitor.py
-```
-
-Windows PowerShellben:
-
-```powershell
-$env:TELEGRAM_TOKEN = "123456:ABC..."
-$env:TELEGRAM_CHAT_ID = "-100123456"
-python printer_monitor.py
-```
-
-Ha valamelyik változó nincs megadva, az értesítések a program konzoljára kerülnek. A program csak az újonnan észlelt problémákról küld értesítést; a megszűnt probléma újbóli megjelenése új értesítést eredményez.
-
 ## Megjegyzések és biztonság
 
-- Az SNMP v2c nem titkosítja a hálózati forgalmat. A közösségnevet és a nyomtatók elérhetőségét a hálózati környezethez igazítsd.
-- A webkiszolgáló alapértelmezés szerint minden hálózati interfészen figyel (`0.0.0.0`), és nem használ hitelesítést vagy HTTPS-t. Csak megbízható belső hálózaton tedd elérhetővé; szükség esetén korlátozd tűzfallal a `HTTP_PORT` portot.
-- A program egyszerre, egymás után kérdezi le a nyomtatókat. Sok eszköz vagy lassú hálózat esetén a teljes frissítési ciklus tovább tarthat a `POLL_SECONDS` értékénél.
-- Ha egy nyomtató nem érhető el, az oldal `OFFLINE` állapotot és a lekérdezési hibát mutatja. A kellékanyag-szint hiányzó vagy nem értelmezhető adata „ismeretlenként” jelenhet meg.
+- Az SNMP v2c nem titkosítja a forgalmat, a közösségnevet szövegesen küldi. Csak megbízható belső hálózaton használd, és ahol lehet, ne hagyd az alapértelmezett `public` értéket.
+- A webkiszolgáló alapból csak a helyi gépről érhető el (`127.0.0.1`). Ha a `HTTP_HOST` értékét `0.0.0.0`-ra állítod, a felület a hálózaton bárkinek elérhető lesz, mert nincs hitelesítés vagy HTTPS. Ilyenkor tűzfallal korlátozd a `HTTP_PORT` portot a megbízható hálózatra.
+- A nyomtatókat a program egymás után kérdezi le. Az elérhetetlen (offline) nyomtató lekérdezése kb. 4 másodpercet vár az időtúllépésre, ezért sok offline eszköz esetén a teljes kör hosszabb lehet a `POLL_SECONDS` értékénél. Ez a hat-hét nyomtatós használatnál nem okoz gondot.
+- A 30 másodperces lekérdezés a hálózatot és a nyomtatókat gyakorlatilag nem terheli (nyomtatónként néhány tucat apró UDP csomag). A kellékanyagok lassan változnak, de így a hibák gyorsan, 30 másodpercen belül észrevehetők.
+- Hibaként a program a nyomtató riasztási tábláját (kritikus és figyelmeztető szint) jeleníti meg. Az információs szintű üzeneteket kihagyja. Ha egy nyomtató egy hibát (például nyomtatófej-hibát) nem ebben a táblában jelez, a `test` paranccsal futtatott lekérdezés kimenetéből derül ki, hol jelenik meg.
+- Ha egy nyomtató nem érhető el, az oldal `OFFLINE` állapotot és a lekérdezési hibát mutatja. A hiányzó vagy nem értelmezhető kellékanyag-szint „ismeretlen” vagy „van még” jelzéssel látszik.
+- A kellékanyagok nevét a nyomtató adja meg, ezért tartalmazhat cikkszámot és sorozatszámot (például `PN 106R03396;SN...`).
