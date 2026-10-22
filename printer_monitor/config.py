@@ -24,6 +24,24 @@ class Config:
         self.printers = []          # [(név, ip), ...] a megadott sorrendben
         self.telegram_token = None
         self.telegram_chat_id = None
+        self.history_enabled = True
+        self.history_keep_days = 365
+        self.history_path = ROOT / "history.db"
+
+
+_TRUE = {"1", "yes", "true", "on", "igen", "be"}
+_FALSE = {"0", "no", "false", "off", "nem", "ki"}
+
+
+def _bool(cp, section, key, default):
+    if not cp.has_option(section, key):
+        return default
+    raw = cp.get(section, key).strip().lower()
+    if raw in _TRUE:
+        return True
+    if raw in _FALSE:
+        return False
+    raise ConfigError("[{}] {}: igen/nem értéket várok (yes / no), ezt kaptam: {!r}".format(section, key, raw))
 
 
 def _int(cp, section, key, default, minimum=None, maximum=None):
@@ -80,6 +98,9 @@ def load(path=None):
     cfg.port = _int(cp, "web", "port", cfg.port, minimum=1, maximum=65535)
     cfg.telegram_token = _str(cp, "telegram", "token", None)
     cfg.telegram_chat_id = _str(cp, "telegram", "chat_id", None)
+    cfg.history_enabled = _bool(cp, "history", "enabled", cfg.history_enabled)
+    cfg.history_keep_days = _int(cp, "history", "keep_days", cfg.history_keep_days, minimum=1, maximum=3650)
+    cfg.history_path = ROOT / _str(cp, "history", "file", "history.db")
 
     if not cp.has_section("printers"):
         raise ConfigError("A config.ini-ből hiányzik a [printers] szakasz.")

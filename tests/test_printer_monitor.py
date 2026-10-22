@@ -82,11 +82,19 @@ class HelperTests(unittest.TestCase):
 
     def test_issues_of(self):
         offline = {"online": False}
-        self.assertEqual(issues_of(offline, 20), {"OFFLINE"})
+        self.assertEqual(issues_of(offline, 20), {"offline": ("offline", "OFFLINE")})
         online = {"online": True, "supplies": [{"name": "Toner", "pct": 5}, {"name": "Dob", "pct": 80},
                                                {"name": "Henger", "pct": None}],
                   "alerts": [{"sev": "KRITIKUS", "text": "Printhead error"}]}
-        self.assertEqual(issues_of(online, 20), {"Toner: 5%", "KRITIKUS: Printhead error"})
+        self.assertEqual({k: v[1] for k, v in issues_of(online, 20).items()},
+                         {"supply:Toner": "Toner: 5%",
+                          "alert:KRITIKUS:Printhead error": "KRITIKUS: Printhead error"})
+
+    def test_issue_key_does_not_depend_on_the_level(self):
+        online = {"online": True, "supplies": [{"name": "Toner", "pct": 5}], "alerts": []}
+        before = set(issues_of(online, 20))
+        online["supplies"][0]["pct"] = 4
+        self.assertEqual(set(issues_of(online, 20)), before)
 
 
 class ConfigTests(unittest.TestCase):
@@ -125,6 +133,24 @@ class ConfigTests(unittest.TestCase):
     def test_example_config_is_valid(self):
         cfg = config.load(ROOT / "config.example.ini")
         self.assertTrue(cfg.printers)
+        self.assertTrue(cfg.history_enabled)
+        self.assertEqual(cfg.history_keep_days, 365)
+
+    def test_history_defaults_and_options(self):
+        cfg = self._load("[printers]\nA = 10.0.0.1\n")
+        self.assertTrue(cfg.history_enabled)
+        self.assertEqual(cfg.history_path, ROOT / "history.db")
+        cfg = self._load("[history]\nenabled = nem\nkeep_days = 30\nfile = elozmeny.db\n"
+                         "[printers]\nA = 10.0.0.1\n")
+        self.assertFalse(cfg.history_enabled)
+        self.assertEqual(cfg.history_keep_days, 30)
+        self.assertEqual(cfg.history_path, ROOT / "elozmeny.db")
+
+    def test_bad_history_values_are_rejected(self):
+        for text in ("[history]\nenabled = talán\n", "[history]\nkeep_days = 0\n",
+                     "[history]\nkeep_days = sok\n"):
+            with self.assertRaises(config.ConfigError, msg=text):
+                self._load(text + "[printers]\nA = 10.0.0.1\n")
 
 
 class MonitorAndWebTests(unittest.TestCase):
