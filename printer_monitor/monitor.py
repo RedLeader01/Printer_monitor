@@ -38,7 +38,8 @@ class Monitor:
     def _poll_one(self, item):
         name, ip = item
         try:
-            r = printers.poll(name, ip, self.cfg.community, self.cfg.snmp_port)
+            r = printers.poll(name, ip, self.cfg.community, self.cfg.snmp_port,
+                              ignore_alerts=self.cfg.ignore_alerts)
         except Exception as e:      # váratlan hiba se állítsa le a figyelést
             r = {"name": name, "ip": ip, "online": False, "status": "-", "supplies": [],
                  "alerts": [], "info": {}, "error": "belső hiba: {}".format(e)[:200],
