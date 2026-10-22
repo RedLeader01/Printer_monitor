@@ -11,7 +11,7 @@ from printer_monitor.config import ROOT
 from printer_monitor.monitor import Monitor, issues_of
 from printer_monitor.web import make_server
 
-from .fake_agent import FakeAgent
+from .fake_agent import DEFAULT_DATA, FakeAgent
 
 
 class StubNotifier:
@@ -47,6 +47,26 @@ class PollTests(unittest.TestCase):
 
     def test_alerts(self):
         self.assertEqual(self.r["alerts"], [{"sev": "figyelmeztetés", "text": "Cartridge low"}])
+
+    def test_ignored_alerts_are_left_out(self):
+        r = printers.poll("T", "127.0.0.1", "public", self.agent.port, timeout=0.5,
+                          ignore_alerts=["CARTRIDGE low"])        # kis/nagybetű nem számít
+        self.assertEqual(r["alerts"], [])
+        self.assertTrue(r["online"])
+        self.assertEqual(len(r["supplies"]), 3)                   # a többi adat változatlan
+
+    def test_sleep_mode_message_is_ignored_by_default(self):
+        data = dict(DEFAULT_DATA)
+        data["1.3.6.1.2.1.43.18.1.1.8.1.1"] = "016-425 A készülék szendergő módban van. Nincs szükség beavatkozásra."
+        agent = FakeAgent(data).start()
+        try:
+            shown = printers.poll("T", "127.0.0.1", "public", agent.port, timeout=0.5)
+            hidden = printers.poll("T", "127.0.0.1", "public", agent.port, timeout=0.5,
+                                   ignore_alerts=config.Config().ignore_alerts)
+        finally:
+            agent.stop()
+        self.assertEqual(len(shown["alerts"]), 1)                 # szűrő nélkül megjelenne
+        self.assertEqual(hidden["alerts"], [])
 
     def test_info(self):
         i = self.r["info"]
@@ -145,6 +165,13 @@ class ConfigTests(unittest.TestCase):
         self.assertFalse(cfg.history_enabled)
         self.assertEqual(cfg.history_keep_days, 30)
         self.assertEqual(cfg.history_path, ROOT / "elozmeny.db")
+
+    def test_ignore_alerts_option(self):
+        self.assertEqual(self._load("[printers]\nA = 10.0.0.1\n").ignore_alerts, ["016-425"])      # alapérték
+        cfg = self._load("[general]\nignore_alerts = 016-425, Szendergő ,\n[printers]\nA = 10.0.0.1\n")
+        self.assertEqual(cfg.ignore_alerts, ["016-425", "Szendergő"])
+        cfg = self._load("[general]\nignore_alerts =\n[printers]\nA = 10.0.0.1\n")
+        self.assertEqual(cfg.ignore_alerts, [])                                                    # üres: semmi sem marad ki
 
     def test_bad_history_values_are_rejected(self):
         for text in ("[history]\nenabled = talán\n", "[history]\nkeep_days = 0\n",

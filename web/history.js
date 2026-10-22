@@ -45,6 +45,7 @@ function fmtTime(ts) {
 
 const printerSelect = document.getElementById("printer");
 const daysSelect = document.getElementById("days");
+const kindSelect = document.getElementById("kind");
 const statusEl = document.getElementById("status");
 const summaryEl = document.getElementById("summary");
 const appEl = document.getElementById("app");
@@ -79,13 +80,16 @@ function render(data) {
       h("b", null, "enabled = yes"), " beállítással kapcsolható be."));
     return;
   }
-  const eps = data.episodes || [];
+  const all = data.episodes || [];
+  const eps = kindSelect.value ? all.filter((e) => e.kind === kindSelect.value) : all;
   const running = eps.filter((e) => e.ended === null || e.ended === undefined).length;
   summaryEl.textContent = eps.length
     ? `${eps.length} esemény` + (running ? `, ebből ${running} még tart.` : ".")
     : "";
   if (!eps.length) {
-    appEl.append(h("p", null, "Ebben az időszakban nem volt rögzített esemény."));
+    appEl.append(h("p", null, all.length
+      ? "Ebből a típusból nem volt esemény a kiválasztott időszakban."
+      : "Ebben az időszakban nem volt rögzített esemény."));
     return;
   }
   const head = h("tr", null, ["Kezdete", "Nyomtató", "Esemény", "Részlet", "Vége", "Időtartam"]
@@ -96,6 +100,7 @@ function render(data) {
 }
 
 let loadSeq = 0;
+let lastData = null;
 
 async function load() {
   const seq = ++loadSeq;               // a lassabb, régebbi válasz ne írja felül az újabbat
@@ -106,6 +111,7 @@ async function load() {
     if (!r.ok) throw new Error("HTTP " + r.status);
     const data = await r.json();
     if (seq !== loadSeq) return;
+    lastData = data;
     render(data);
     statusEl.className = "status";
     statusEl.textContent = "Frissítve: " + new Date().toLocaleTimeString("hu-HU");
@@ -121,6 +127,9 @@ const initial = new URLSearchParams(window.location.search);
 if (initial.get("days") && [...daysSelect.options].some((o) => o.value === initial.get("days"))) {
   daysSelect.value = initial.get("days");
 }
+if (initial.get("kind") && [...kindSelect.options].some((o) => o.value === initial.get("kind"))) {
+  kindSelect.value = initial.get("kind");
+}
 if (initial.get("printer")) {
   printerSelect.append(h("option", { value: initial.get("printer") }, initial.get("printer")));
   printerSelect.value = initial.get("printer");
@@ -128,5 +137,6 @@ if (initial.get("printer")) {
 
 printerSelect.addEventListener("change", load);
 daysSelect.addEventListener("change", load);
+kindSelect.addEventListener("change", () => { if (lastData) render(lastData); });   // csak szűrés, nincs új lekérés
 load();
 setInterval(load, REFRESH_MS);

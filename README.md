@@ -59,6 +59,7 @@ Linuxon vagy macOS-en `python3 run.py`. Ezután nyisd meg a böngészőben: `htt
 | `[general]` | `warn_pct` | Sárga jelzés és "Hamarosan elfogy" lista, ha a fogyóanyag ennyi % alá esik (alapérték: 20) |
 | `[general]` | `crit_pct` | Piros jelzés ennyi % alatt (alapérték: 10) |
 | `[general]` | `snmp_port` | A nyomtatók SNMP-portja, ritkán kell (alapérték: 161) |
+| `[general]` | `ignore_alerts` | Vesszővel elválasztott szövegrészletek: az ezeket tartalmazó nyomtatói figyelmeztetéseket a program kihagyja (nem látszik a kártyán, nem kerül az előzményekbe, és nem megy róla értesítés). Alapérték: `016-425` (a Xerox "szendergő módban van" üzenete). Üresen hagyva minden figyelmeztetés megjelenik |
 | `[web]` | `host` | `127.0.0.1`: csak erről a gépről érhető el az oldal. `0.0.0.0`: a hálózat többi gépéről is |
 | `[web]` | `port` | A weboldal portja (alapérték: 8080) |
 | `[history]` | `enabled` | Az előzmények mentése be (`yes`) vagy ki (`no`) (alapérték: `yes`) |
@@ -128,7 +129,7 @@ Egy sor egy **esemény**, kezdettel, véggel és időtartammal:
 | A figyelő nem futott | A program hosszabb ideig (pár percnél tovább) nem futott, például leállították vagy a gép ki volt kapcsolva |
 
 - Amíg egy probléma fennáll, a **Vége** oszlopban "tart még" áll, és a sor sárga. Amint megszűnik, a sor lezárul, és megjelenik az időtartam.
-- Az oldalon szűrhetsz nyomtatóra és időszakra (24 óra, 7, 30, 90 nap, 1 év). A címsorba írt `?printer=NÉV&days=30` előre beállítja a szűrőket.
+- Az oldalon szűrhetsz nyomtatóra, időszakra (24 óra, 7, 30, 90 nap, 1 év) és eseménytípusra (például csak a "Nem elérhető" események). A címsorba írt `?printer=NÉV&days=30&kind=offline` előre beállítja a szűrőket (`kind` értékei: `offline`, `alert`, `supply_low`, `gap`).
 - Ha a kellékanyag szintje közben csökken (15% → 14%), az ugyanaz az esemény marad, csak a százalék frissül. Nem lesz új sor, és nem megy új értesítés sem.
 - Ha a nyomtató átmenetileg elérhetetlenné válik, a közben fennálló hibák és az alacsony szint nyitva maradnak, mert nem tudható, hogy megszűntek-e. Az elérhetőség visszatértekor folytatódnak.
 - A kellékanyagok szintjét a program **csak változáskor** menti el, ezért a fájl kicsi marad (becslés szerint hét nyomtatónál évente legfeljebb pár MB). Ezek az adatok később előrejelzéshez és csere-észleléshez használhatók (például egy hirtelen ugrás 5%-ról 100%-ra tonercserét jelent). Az Előzmények oldal jelenleg az eseményeket mutatja, a szinteket nem.

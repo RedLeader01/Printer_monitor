@@ -19,6 +19,8 @@ class Config:
         self.warn_pct = 20
         self.crit_pct = 10
         self.snmp_port = 161
+        # A Xerox "szendergő módban van" üzenete nem hiba, és ki-be kapcsolgat, ezért alapból kimarad.
+        self.ignore_alerts = ["016-425"]
         self.host = "127.0.0.1"
         self.port = 8080
         self.printers = []          # [(név, ip), ...] a megadott sorrendben
@@ -94,6 +96,8 @@ def load(path=None):
     cfg.warn_pct = _int(cp, "general", "warn_pct", cfg.warn_pct, minimum=0, maximum=100)
     cfg.crit_pct = _int(cp, "general", "crit_pct", cfg.crit_pct, minimum=0, maximum=100)
     cfg.snmp_port = _int(cp, "general", "snmp_port", cfg.snmp_port, minimum=1, maximum=65535)
+    if cp.has_option("general", "ignore_alerts"):       # üresen hagyva: egyetlen üzenet sem marad ki
+        cfg.ignore_alerts = [x.strip() for x in cp.get("general", "ignore_alerts").split(",") if x.strip()]
     cfg.host = _str(cp, "web", "host", cfg.host)
     cfg.port = _int(cp, "web", "port", cfg.port, minimum=1, maximum=65535)
     cfg.telegram_token = _str(cp, "telegram", "token", None)

@@ -113,8 +113,17 @@ def poll_info(w):
     return info
 
 
-def poll(name, ip, community="public", port=161, timeout=2.0):
-    """Lekérdez egy nyomtatót, és egy JSON-barát szótárat ad vissza."""
+def _ignored(text, patterns):
+    """Igaz, ha a figyelmeztetés szövege tartalmazza a kihagyandó szövegrészletek egyikét."""
+    low = str(text).lower()
+    return any(p.lower() in low for p in patterns)
+
+
+def poll(name, ip, community="public", port=161, timeout=2.0, ignore_alerts=()):
+    """Lekérdez egy nyomtatót, és egy JSON-barát szótárat ad vissza.
+
+    Az ignore_alerts szövegrészleteit tartalmazó figyelmeztetéseket kihagyja (pl. a Xerox
+    "szendergő módban van" üzenetét, ami nem hiba)."""
     w = partial(walk, ip, community=community, port=port, timeout=timeout)
     res = {"name": name, "ip": ip, "online": False, "status": "-", "supplies": [],
            "alerts": [], "info": {}, "error": "", "time": time.strftime("%H:%M:%S")}
@@ -152,7 +161,7 @@ def poll(name, ip, community="public", port=161, timeout=2.0):
             ad = w(OID_ALERT_DESC)
             for idx, text in ad.items():
                 s = SEVERITY.get(to_int(sev.get(idx)), "info")
-                if s != "info":
+                if s != "info" and not _ignored(text, ignore_alerts):
                     res["alerts"].append({"sev": s, "text": text})
         except Exception:
             pass

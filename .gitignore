@@ -8,3 +8,5 @@ config.ini
 # Az előzmények adatbázisa (hibák, események, nyomtatónevek) helyi adat.
 history.db
 history.db-journal
+demo.py
+,
