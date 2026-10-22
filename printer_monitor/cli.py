@@ -1,11 +1,13 @@
 """Parancssori belépési pont: figyelő indítása vagy egy nyomtató gyors tesztje."""
 import argparse
 import json
+import sqlite3
 import sys
 from pathlib import Path
 
 from . import config, printers
 from .config import ROOT
+from .history import History
 from .monitor import Monitor
 from .notify import Notifier
 from .web import make_server
@@ -51,9 +53,22 @@ def main(argv=None):
         print("Lehet, hogy a port foglalt. Állíts be másikat a config.ini [web] szakaszában.")
         return 1
 
+    # Az előzményeket csak a webszerver sikeres létrehozása után nyitjuk meg, hogy egy foglalt port
+    # miatt félbemaradt indítás ne módosítsa az adatbázist.
+    history_note = "ki"
+    if cfg.history_enabled:
+        try:
+            monitor.history = History(cfg.history_path, cfg.history_keep_days)
+            monitor.history.start(cfg.poll_seconds)
+            history_note = "be ({}, {} napig őrzi)".format(cfg.history_path.name, cfg.history_keep_days)
+        except (sqlite3.Error, OSError) as e:
+            monitor.history = None
+            history_note = "KI - nem sikerült megnyitni a(z) {} fájlt: {}".format(cfg.history_path, e)
+
     monitor.start()
     print("{} nyomtató figyelve, lekérdezés {} másodpercenként.".format(len(cfg.printers), cfg.poll_seconds))
     print("Telegram értesítés: {}".format("be" if notifier.telegram_enabled else "ki (csak a konzolra ír)"))
+    print("Előzmények: {}".format(history_note))
     print("Fut: http://{}:{}   (leállítás: Ctrl+C)".format(cfg.host, cfg.port))
     try:
         server.serve_forever()
@@ -61,6 +76,8 @@ def main(argv=None):
         print("\nLeállítás...")
     finally:
         server.server_close()
+        if monitor.history is not None:
+            monitor.history.close()
     return 0
 
 

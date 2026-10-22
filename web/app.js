@@ -115,32 +115,41 @@ function renderOrderBox(printers) {
   return h("div", { class: "order" }, h("b", null, "Hamarosan elfogy:"), lines);
 }
 
-const MIN_COL_W = 300;
-const COL_GAP = 12;
+// A kártyák oszlopokba kerülnek (az i. kártya az i % oszlopszám oszlopba), és minden oszlopban
+// szorosan egymás alatt állnak. Így nem marad lyuk a rövidebb kártyák alatt, és a sorrend
+// balról jobbra olvasható marad. A kártyák helye nem függ a magasságuktól, ezért a Részletek
+// kinyitása nem rendezi át a többit.
+const MIN_CARD_PX = 300;   // ugyanez a szám a style.css-ben is szerepel (.col min-width)
+const GAP_PX = 12;
 let lastData = null;
 let lastCols = 0;
 
 function columnCount() {
   const w = document.getElementById("app").clientWidth;
-  return Math.max(1, Math.floor((w + COL_GAP) / (MIN_COL_W + COL_GAP)));
+  return Math.max(1, Math.floor((w + GAP_PX) / (MIN_CARD_PX + GAP_PX)));
 }
 
 function render(data) {
   lastData = data;
   const app = document.getElementById("app");
   const printers = data.printers || [];
+  const box = renderOrderBox(printers);
   const n = columnCount();
   lastCols = n;
   const cols = Array.from({ length: n }, () => h("div", { class: "col" }));
   printers.forEach((p, i) => cols[i % n].append(renderCard(p)));
-  const box = renderOrderBox(printers);
   app.textContent = "";
   if (box) app.append(box);
   app.append(h("div", { class: "g" }, cols));
 }
 
+// Átméretezéskor (pl. félképes ablak) újrarendezi az oszlopokat, ha az oszlopszám változott.
+let resizeTimer = null;
 window.addEventListener("resize", () => {
-  if (lastData && columnCount() !== lastCols) render(lastData);
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => {
+    if (lastData && columnCount() !== lastCols) render(lastData);
+  }, 150);
 });
 
 async function refresh() {

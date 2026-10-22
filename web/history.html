@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="hu">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Előzmények</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="icon" href="data:,">
+</head>
+<body>
+  <h1>Előzmények</h1>
+  <nav class="nav"><a href="index.html">← Vissza a nyomtatókhoz</a></nav>
+  <div class="filters">
+    <label>Nyomtató
+      <select id="printer"><option value="">Mind</option></select>
+    </label>
+    <label>Időszak
+      <select id="days">
+        <option value="1">Elmúlt 24 óra</option>
+        <option value="7" selected>Elmúlt 7 nap</option>
+        <option value="30">Elmúlt 30 nap</option>
+        <option value="90">Elmúlt 90 nap</option>
+        <option value="365">Elmúlt 1 év</option>
+      </select>
+    </label>
+  </div>
+  <div id="status" class="status">Betöltés…</div>
+  <div id="summary" class="summary"></div>
+  <div id="app"></div>
+  <noscript><p>Az oldal megjelenítéséhez JavaScript szükséges.</p></noscript>
+  <script src="history.js"></script>
+</body>
+</html>

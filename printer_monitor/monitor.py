@@ -5,25 +5,32 @@ from concurrent.futures import ThreadPoolExecutor
 
 from . import printers
 
+OFFLINE_KEY = "offline"
+
 
 def issues_of(r, warn_pct):
-    """A nyomtató jelenlegi problémái szövegként (az értesítések ebből döntik el, mi új)."""
-    out = set()
+    """A nyomtató jelenlegi problémái: {kulcs: (fajta, szöveg)}.
+
+    A kulcs azonosítja a problémát (az értesítések és az előzmények ebből döntik el, hogy
+    ugyanaz-e még), ezért nem tartalmazhat változó értéket: a kellékanyag kulcsa csak a nevét
+    tartalmazza, a százalék a szövegben van, így egy szintcsökkenés nem számít új problémának.
+    """
     if not r["online"]:
-        out.add("OFFLINE")
-        return out
+        return {OFFLINE_KEY: ("offline", "OFFLINE")}
+    out = {}
     for s in r["supplies"]:
         if s["pct"] is not None and s["pct"] < warn_pct:
-            out.add("{}: {}%".format(s["name"], s["pct"]))
+            out["supply:" + s["name"]] = ("supply_low", "{}: {}%".format(s["name"], s["pct"]))
     for a in r["alerts"]:
-        out.add("{}: {}".format(a["sev"], a["text"]))
+        out["alert:{}:{}".format(a["sev"], a["text"])] = ("alert", "{}: {}".format(a["sev"], a["text"]))
     return out
 
 
 class Monitor:
-    def __init__(self, cfg, notifier):
+    def __init__(self, cfg, notifier, history=None):
         self.cfg = cfg
         self.notifier = notifier
+        self.history = history
         self.state = {}
         self.lock = threading.Lock()
         self._last_issues = {}
@@ -36,20 +43,38 @@ class Monitor:
             r = {"name": name, "ip": ip, "online": False, "status": "-", "supplies": [],
                  "alerts": [], "info": {}, "error": "belső hiba: {}".format(e)[:200],
                  "time": time.strftime("%H:%M:%S")}
-        now = issues_of(r, self.cfg.warn_pct)
+        found = issues_of(r, self.cfg.warn_pct)
         with self.lock:
             self.state[name] = r
-            before = self._last_issues.get(name, set())
+            before = self._last_issues.get(name, {})
+            if r["online"]:
+                now = found
+            else:
+                # Elérhetetlen nyomtatónál nem tudjuk, megszűnt-e a többi hiba, ezért azokat
+                # fennállónak tekintjük. Így az elérhetőség villanása után nem érkezik újra
+                # ugyanaz az értesítés.
+                now = dict(before)
+                now.update(found)
             self._last_issues[name] = now
-        new = now - before
+        new = sorted(text for key, (_, text) in now.items() if key not in before)
         if new:
-            self.notifier.send("{} ({}):\n{}".format(name, ip, "\n".join(sorted(new))))
+            self.notifier.send("{} ({}):\n{}".format(name, ip, "\n".join(new)))
+        if self.history is not None:
+            try:
+                self.history.record(name, r["online"], now, r["supplies"])
+            except Exception as e:      # az előzmények hibája ne akassza meg a figyelést
+                print("Előzmény-mentési hiba:", e)
 
     def poll_once(self):
         """Egyszerre kérdezi le az összes nyomtatót (párhuzamosan)."""
         workers = max(1, min(8, len(self.cfg.printers)))
         with ThreadPoolExecutor(max_workers=workers) as pool:
             list(pool.map(self._poll_one, self.cfg.printers))
+        if self.history is not None:
+            try:
+                self.history.cycle_done()
+            except Exception as e:
+                print("Előzmény-mentési hiba:", e)
 
     def _loop(self):
         while True:

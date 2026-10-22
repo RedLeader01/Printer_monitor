@@ -15,15 +15,19 @@ printer-monitor/
     snmp.py              SNMP-kliens (walk)
     printers.py          egy nyomtató lekérdezése, Részletek adatai
     monitor.py           lekérdező ciklus, új problémák észlelése
+    history.py           előzmények mentése SQLite-ba (hibák, elérhetetlenség, szintek)
     notify.py            értesítések (most: Telegram)
     config.py            a config.ini beolvasása és ellenőrzése
-    web.py               kis webszerver: /api és a web/ mappa fájljai
+    web.py               kis webszerver: /api, /api/history és a web/ mappa fájljai
     cli.py               parancssor (indítás, test)
   web/                   ← a weboldal (a böngészőben fut)
-    index.html
+    index.html           a nyomtatók áttekintője
+    history.html         az Előzmények oldal
     style.css
     app.js               kirajzolja a kártyákat a /api adataiból
+    history.js           kirajzolja az előzményeket az /api/history adataiból
   tests/                 ← automatikus tesztek hamis nyomtatóval
+  history.db             ← az előzmények adatbázisa (a program hozza létre, nem kerül verziókezelésbe)
 ```
 
 A Python csak adatot ad (`/api`), a kinézetet a `web/` mappa adja. A `style.css`-t és az `app.js`-t újraindítás nélkül is átírhatod, elég frissíteni a böngészőt.
@@ -57,6 +61,9 @@ Linuxon vagy macOS-en `python3 run.py`. Ezután nyisd meg a böngészőben: `htt
 | `[general]` | `snmp_port` | A nyomtatók SNMP-portja, ritkán kell (alapérték: 161) |
 | `[web]` | `host` | `127.0.0.1`: csak erről a gépről érhető el az oldal. `0.0.0.0`: a hálózat többi gépéről is |
 | `[web]` | `port` | A weboldal portja (alapérték: 8080) |
+| `[history]` | `enabled` | Az előzmények mentése be (`yes`) vagy ki (`no`) (alapérték: `yes`) |
+| `[history]` | `keep_days` | Ennyi napig őrzi meg az adatokat, utána törli (alapérték: 365) |
+| `[history]` | `file` | Az adatbázisfájl neve a program mappájában (alapérték: `history.db`) |
 | `[printers]` | `Név = IP-cím` | Egy sor egy nyomtató, a megadott sorrendben jelennek meg |
 | `[telegram]` | `token`, `chat_id` | Opcionális, lásd lent |
 
@@ -104,7 +111,32 @@ Az aktuális adatok JSON-formátumban is elérhetők, más programoknak is haszn
 
 ```text
 http://localhost:8080/api
+http://localhost:8080/api/history?printer=NÉV&days=30
 ```
+
+## Előzmények
+
+A program minden problémát elment egy helyi SQLite fájlba (`history.db`), így visszanézhető, **mikor** volt a gond és **mennyi ideig tartott**. Az oldal tetején az **Előzmények →** linkre kattintva (vagy a `http://localhost:8080/history.html` címen) nyílik meg.
+
+Egy sor egy **esemény**, kezdettel, véggel és időtartammal:
+
+| Esemény | Mikor kerül be |
+| --- | --- |
+| Nem elérhető | A nyomtató nem válaszol az SNMP-kérésekre |
+| Hiba / figyelmeztetés | A nyomtató riasztási táblájában kritikus vagy figyelmeztető üzenet jelenik meg (pl. nyomtatófej-hiba) |
+| Kevés kellékanyag | Egy kellékanyag a `warn_pct` érték alá esik |
+| A figyelő nem futott | A program hosszabb ideig (pár percnél tovább) nem futott, például leállították vagy a gép ki volt kapcsolva |
+
+- Amíg egy probléma fennáll, a **Vége** oszlopban "tart még" áll, és a sor sárga. Amint megszűnik, a sor lezárul, és megjelenik az időtartam.
+- Az oldalon szűrhetsz nyomtatóra és időszakra (24 óra, 7, 30, 90 nap, 1 év). A címsorba írt `?printer=NÉV&days=30` előre beállítja a szűrőket.
+- Ha a kellékanyag szintje közben csökken (15% → 14%), az ugyanaz az esemény marad, csak a százalék frissül. Nem lesz új sor, és nem megy új értesítés sem.
+- Ha a nyomtató átmenetileg elérhetetlenné válik, a közben fennálló hibák és az alacsony szint nyitva maradnak, mert nem tudható, hogy megszűntek-e. Az elérhetőség visszatértekor folytatódnak.
+- A kellékanyagok szintjét a program **csak változáskor** menti el, ezért a fájl kicsi marad (becslés szerint hét nyomtatónál évente legfeljebb pár MB). Ezek az adatok később előrejelzéshez és csere-észleléshez használhatók (például egy hirtelen ugrás 5%-ról 100%-ra tonercserét jelent). Az Előzmények oldal jelenleg az eseményeket mutatja, a szinteket nem.
+- A `keep_days` napnál régebbi lezárt események és szintek automatikusan törlődnek (naponta egyszer). A még tartó eseményeket a program nem törli.
+- Ha a program a `history.db` fájlt nem tudja megnyitni (például nincs írási jog a mappában), a figyelés akkor is fut, csak az előzmények nem mentődnek, és erről az indításkor üzenet jelenik meg.
+- A fájl bármilyen SQLite-megjelenítővel (például a [DB Browser for SQLite](https://sqlitebrowser.org/)) megnyitható, a táblák: `episodes`, `readings`.
+
+Kikapcsolás: a `config.ini`-ben `[history]` alatt `enabled = no`.
 
 ## Telegram-értesítések
 
@@ -118,7 +150,12 @@ chat_id = -100123456
 
 Ugyanezek környezeti változóként is megadhatók (`TELEGRAM_TOKEN`, `TELEGRAM_CHAT_ID`), és azok felülírják a `config.ini` értékét. Ha egyik sincs beállítva, az értesítések csak a program konzoljára kerülnek.
 
-A program csak az **újonnan** észlelt problémákról küld üzenetet, nem ismétli azokat minden lekérdezéskor. Ha egy probléma megszűnik, majd később újra megjelenik, az új értesítést eredményez.
+A program csak az **újonnan** észlelt problémákról küld üzenetet, nem ismétli azokat minden lekérdezéskor. Ha egy probléma megszűnik, majd később újra megjelenik, az új értesítést eredményez. Az alábbiak nem számítanak új problémának:
+
+- ha egy kellékanyag szintje tovább csökken (15% → 14%), mert az már ugyanaz a "kevés kellékanyag" probléma;
+- ha egy nyomtató átmenetileg elérhetetlenné válik, majd visszajön: az OFFLINE állapotról kap értesítést, de a közben is fennálló régebbi hibákról nem küld újat.
+
+A program újraindításakor a már fennálló problémákról újra kapsz egy értesítést, mert a program az emlékezetét nem őrzi meg.
 
 ## Tesztek
 
@@ -128,11 +165,11 @@ A projekt mappájából:
 python -m unittest -v
 ```
 
-A tesztek egy hamis (helyi) SNMP-nyomtatót indítanak, és ellenőrzik a lekérdezést, a beállítások beolvasását, az értesítések logikáját és a webszervert is (többek között azt, hogy a `web/` mappán kívüli fájlok nem érhetők el). Nincs szükségük valódi nyomtatóra vagy hálózatra, és nem módosítanak semmit.
+A tesztek egy hamis (helyi) SNMP-nyomtatót indítanak, és ellenőrzik a lekérdezést, a beállítások beolvasását, az értesítések logikáját, az előzmények mentését (események kezdete és vége, újraindítás, szünet-észlelés, takarítás, párhuzamos írás) és a webszervert is (többek között azt, hogy a `web/` mappán kívüli fájlok nem érhetők el). Az előzményeknél ideiglenes adatbázist használnak, a valódi `history.db` fájlodhoz nem nyúlnak. Nincs szükségük valódi nyomtatóra vagy hálózatra, és nem módosítanak semmit.
 
 ## Frissítés
 
-A program frissítéséhez cseréld le a mappa tartalmát az újra, **kivéve a `config.ini` fájlt**, ami a te beállításaidat tartalmazza. Így nem kell újra beírni a nyomtatókat.
+A program frissítéséhez cseréld le a mappa tartalmát az újra, **kivéve a `config.ini` és a `history.db` fájlt**. Az előbbi a te beállításaidat, az utóbbi az összegyűjtött előzményeket tartalmazza. Így nem kell újra beírni a nyomtatókat, és az előzmények sem vesznek el. Frissítés előtt állítsd le a programot.
 
 ## Futtatás Linux szerveren
 
@@ -195,7 +232,7 @@ A Telegram-adatokat megadhatod a `config.ini`-ben, vagy az opcionális `/etc/pri
 
 ## Megjegyzések és biztonság
 
-- **A `config.ini` ne kerüljön nyilvános tárolóba.** Tartalmazza a belső IP-címeket és a Telegram-token is lehet benne. A mellékelt `.gitignore` ezt megakadályozza a Git használatakor; csak a `config.example.ini` kerül be.
+- **A `config.ini` és a `history.db` ne kerüljön nyilvános tárolóba.** A `config.ini` a belső IP-címeket és a Telegram-tokent, a `history.db` a nyomtatók nevét, hibaüzeneteit és az eseményeik idejét tartalmazza. A mellékelt `.gitignore` mindkettőt kizárja a Git használatakor; csak a `config.example.ini` kerül be.
 - Az SNMP v2c nem titkosítja a forgalmat, a közösségnevet szövegesen küldi. Csak megbízható belső hálózaton használd, és ahol lehet, ne hagyd az alapértelmezett `public` értéket.
 - A webkiszolgáló alapból csak a helyi gépről érhető el (`127.0.0.1`). Ha a `host` értékét `0.0.0.0`-ra állítod, a felület a hálózaton bárkinek elérhető lesz, mert nincs hitelesítés vagy HTTPS. Ilyenkor tűzfallal korlátozd a portot a megbízható hálózatra. A webszerver csak olvasni enged: nyomtatót nem tud vezérelni.
 - A nyomtatókat a program párhuzamosan kérdezi le (egyszerre legfeljebb 8-at), így egy elérhetetlen nyomtató nem lassítja a többit. Az offline nyomtató lekérdezése kb. 4 másodpercig vár az időtúllépésre.
