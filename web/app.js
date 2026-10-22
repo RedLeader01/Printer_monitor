@@ -115,15 +115,33 @@ function renderOrderBox(printers) {
   return h("div", { class: "order" }, h("b", null, "Hamarosan elfogy:"), lines);
 }
 
+const MIN_COL_W = 300;
+const COL_GAP = 12;
+let lastData = null;
+let lastCols = 0;
+
+function columnCount() {
+  const w = document.getElementById("app").clientWidth;
+  return Math.max(1, Math.floor((w + COL_GAP) / (MIN_COL_W + COL_GAP)));
+}
+
 function render(data) {
+  lastData = data;
   const app = document.getElementById("app");
   const printers = data.printers || [];
+  const n = columnCount();
+  lastCols = n;
+  const cols = Array.from({ length: n }, () => h("div", { class: "col" }));
+  printers.forEach((p, i) => cols[i % n].append(renderCard(p)));
   const box = renderOrderBox(printers);
-  const grid = h("div", { class: "g" }, printers.map(renderCard));
   app.textContent = "";
   if (box) app.append(box);
-  app.append(grid);
+  app.append(h("div", { class: "g" }, cols));
 }
+
+window.addEventListener("resize", () => {
+  if (lastData && columnCount() !== lastCols) render(lastData);
+});
 
 async function refresh() {
   const status = document.getElementById("status");
