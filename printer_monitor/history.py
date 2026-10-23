@@ -169,7 +169,30 @@ class History:
         for k, pct in new_levels:               # csak sikeres mentés után jegyezzük meg
             self._last_pct[k] = pct
 
+    def close_printer(self, printer):
+        """Egy nyomtató törlésekor hívandó: a még tartó eseményei lezárulnak (különben örökre
+        "tart még" maradnának). A régi események megmaradnak, és az időszakszűrő szerint látszanak:
+        ha 2 hete töröltek egy nyomtatót, az 1 hetes nézetben már nem szerepel, a havi nézetben igen."""
+        now = self._now()
+
+        def work():
+            self._db.execute("UPDATE episodes SET ended = ? WHERE printer = ? AND ended IS NULL AND kind != ?",
+                             (now, printer, GAP_KIND))
+
+        self._transaction(work)
+        # Ha ugyanezt a nevet később újra felveszik, az első szintet újra rögzítse.
+        self._last_pct = {k: v for k, v in self._last_pct.items() if k[0] != printer}
+
     # ------------------------------------------------------------ lekérdezés
+    def printer_names(self, days=7):
+        """Azoknak a nyomtatóknak a neve, amelyeknek az időszakban volt eseményük (a törölteké is)."""
+        since = self._now() - int(days) * 86400
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT DISTINCT printer FROM episodes WHERE (ended IS NULL OR ended >= ?) AND printer != ? "
+                "ORDER BY printer", (since, ALL_PRINTERS)).fetchall()
+        return [r["printer"] for r in rows]
+
     def episodes(self, printer=None, days=7, limit=2000):
         """Az elmúlt `days` nap epizódjai, a legfrissebb elöl. A még tartó epizód `ended` mezője None."""
         since = self._now() - int(days) * 86400

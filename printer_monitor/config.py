@@ -23,12 +23,17 @@ class Config:
         self.ignore_alerts = ["016-425"]
         self.host = "127.0.0.1"
         self.port = 8080
-        self.printers = []          # [(név, ip), ...] a megadott sorrendben
+        # A config.ini régi [printers] szakasza [(név, ip), ...]. A nyomtatókat mostantól a weboldalon
+        # kell felvenni (printers.db); ez a lista csak a `python run.py import-printers` forrása.
+        self.printers = []
         self.telegram_token = None
         self.telegram_chat_id = None
         self.history_enabled = True
         self.history_keep_days = 365
         self.history_path = ROOT / "history.db"
+        self.printers_path = ROOT / "printers.db"
+        self.trust_localhost = True     # a futtató gépről nem kell belépni a kezeléshez
+        self.session_hours = 8          # a belépés ennyi óráig érvényes
 
 
 _TRUE = {"1", "yes", "true", "on", "igen", "be"}
@@ -75,7 +80,8 @@ def load(path=None):
             shutil.copyfile(str(EXAMPLE_PATH), str(path))
             raise ConfigError(
                 "Még nem volt config.ini, ezért létrehoztam a példából:\n  {}\n"
-                "Írd bele a saját nyomtatóid nevét és IP-címét, majd indítsd újra.".format(path))
+                "Nézd át a beállításokat (pl. a közösségnevet), majd indítsd újra. "
+                "A nyomtatókat a weboldalon veheted fel.".format(path))
         raise ConfigError("Nem találom a konfigurációs fájlt: {}".format(path))
 
     cp = configparser.ConfigParser(
@@ -105,14 +111,16 @@ def load(path=None):
     cfg.history_enabled = _bool(cp, "history", "enabled", cfg.history_enabled)
     cfg.history_keep_days = _int(cp, "history", "keep_days", cfg.history_keep_days, minimum=1, maximum=3650)
     cfg.history_path = ROOT / _str(cp, "history", "file", "history.db")
+    cfg.printers_path = ROOT / _str(cp, "storage", "printers_file", "printers.db")
+    cfg.trust_localhost = _bool(cp, "admin", "trust_localhost", cfg.trust_localhost)
+    cfg.session_hours = _int(cp, "admin", "session_hours", cfg.session_hours, minimum=1, maximum=720)
 
-    if not cp.has_section("printers"):
-        raise ConfigError("A config.ini-ből hiányzik a [printers] szakasz.")
-    for name, ip in cp.items("printers"):
-        name, ip = name.strip(), ip.strip()
-        if not name or not ip:
-            raise ConfigError("[printers]: minden sorban 'Név = IP-cím' kell, hibás sor: {!r} = {!r}".format(name, ip))
-        cfg.printers.append((name, ip))
-    if not cfg.printers:
-        raise ConfigError("A [printers] szakaszban nincs egyetlen nyomtató sem.")
+    # A régi [printers] szakasz már nem kötelező (és nem is használja a program), de ha megvan,
+    # az `import-printers` parancs át tudja venni belőle a nyomtatókat.
+    if cp.has_section("printers"):
+        for name, ip in cp.items("printers"):
+            name, ip = name.strip(), ip.strip()
+            if not name or not ip:
+                raise ConfigError("[printers]: minden sorban 'Név = IP-cím' kell, hibás sor: {!r} = {!r}".format(name, ip))
+            cfg.printers.append((name, ip))
     return cfg

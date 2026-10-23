@@ -127,12 +127,12 @@ class ConfigTests(unittest.TestCase):
     def test_valid_config_keeps_order_and_names(self):
         cfg = self._load("[general]\ncommunity = titok\npoll_seconds = 15\nwarn_pct = 25\n"
                          "[web]\nport = 9000\n"
-                         "[printers]\nHAT-KO-4 = 10.0.0.4   # megjegyzés\nHAT-BU-1 = 10.0.0.1\n")
+                         "[printers]\nIroda-4 = 10.0.0.4   # megjegyzés\nIroda-1 = 10.0.0.1\n")
         self.assertEqual(cfg.community, "titok")
         self.assertEqual(cfg.poll_seconds, 15)
         self.assertEqual(cfg.warn_pct, 25)
         self.assertEqual(cfg.port, 9000)
-        self.assertEqual(cfg.printers, [("HAT-KO-4", "10.0.0.4"), ("HAT-BU-1", "10.0.0.1")])
+        self.assertEqual(cfg.printers, [("Iroda-4", "10.0.0.4"), ("Iroda-1", "10.0.0.1")])
 
     def test_notepad_bom_is_accepted(self):
         cfg = self._load("[printers]\nA = 10.0.0.1\n", encoding="utf-8-sig")
@@ -146,13 +146,32 @@ class ConfigTests(unittest.TestCase):
         with self.assertRaises(config.ConfigError):
             self._load("[web]\nport = nyolcvan\n[printers]\nA = 10.0.0.1\n")
 
-    def test_no_printers_is_rejected(self):
+    def test_printers_section_is_optional(self):
+        # A nyomtatókat a weboldalon veszik fel, a config.ini-ben a [printers] szakasz már nem kötelező.
+        self.assertEqual(self._load("[general]\ncommunity = x\n").printers, [])
+        self.assertEqual(self._load("[printers]\n").printers, [])
+
+    def test_bad_printers_line_is_still_rejected(self):
         with self.assertRaises(config.ConfigError):
-            self._load("[printers]\n")
+            self._load("[printers]\nA =\n")
+
+    def test_admin_and_storage_options(self):
+        cfg = self._load("")
+        self.assertTrue(cfg.trust_localhost)
+        self.assertEqual(cfg.session_hours, 8)
+        self.assertEqual(cfg.printers_path, ROOT / "printers.db")
+        cfg = self._load("[admin]\ntrust_localhost = no\nsession_hours = 2\n[storage]\nprinters_file = lista.db\n")
+        self.assertFalse(cfg.trust_localhost)
+        self.assertEqual(cfg.session_hours, 2)
+        self.assertEqual(cfg.printers_path, ROOT / "lista.db")
+        for text in ("[admin]\nsession_hours = 0\n", "[admin]\nsession_hours = sok\n", "[admin]\ntrust_localhost = talán\n"):
+            with self.assertRaises(config.ConfigError, msg=text):
+                self._load(text)
 
     def test_example_config_is_valid(self):
         cfg = config.load(ROOT / "config.example.ini")
-        self.assertTrue(cfg.printers)
+        self.assertEqual(cfg.printers, [])                  # a példában nincs nyomtató: a weboldalon kell felvenni
+        self.assertTrue(cfg.trust_localhost)
         self.assertTrue(cfg.history_enabled)
         self.assertEqual(cfg.history_keep_days, 365)
 

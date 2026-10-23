@@ -8,8 +8,7 @@ Egyszerű, SNMP-alapú nyomtatófigyelő Pythonból. A program rendszeres idők�
 
 ```text
 printer-monitor/
-  run.py                 ← innen indítod a programot
-  config.example.ini     ← példa beállítófájl (ebből lesz a config.ini)
+  run.py                 ← innen indítod a programot  config.example.ini     ← példa beállítófájl (ebből lesz a config.ini)
   config.ini             ← a te beállításaid (nem kerül verziókezelésbe)
   printer_monitor/       ← a Python kód
     snmp.py              SNMP-kliens (walk)
@@ -19,7 +18,9 @@ printer-monitor/
     notify.py            értesítések (most: Telegram)
     config.py            a config.ini beolvasása és ellenőrzése
     web.py               kis webszerver: /api, /api/history és a web/ mappa fájljai
-    cli.py               parancssor (indítás, test)
+    store.py             a nyomtatók és az admin fiókok adatbázisa (printers.db)
+    auth.py              admin belépés, munkamenetek, védelem
+    cli.py               parancssor (indítás, test, admin, printers)
   web/                   ← a weboldal (a böngészőben fut)
     index.html           a nyomtatók áttekintője
     history.html         az Előzmények oldal
@@ -28,6 +29,7 @@ printer-monitor/
     history.js           kirajzolja az előzményeket az /api/history adataiból
   tests/                 ← automatikus tesztek hamis nyomtatóval
   history.db             ← az előzmények adatbázisa (a program hozza létre, nem kerül verziókezelésbe)
+  printers.db            ← a felvett nyomtatók és az admin fiókok (a program hozza létre, nem kerül verziókezelésbe)
 ```
 
 A Python csak adatot ad (`/api`), a kinézetet a `web/` mappa adja. A `style.css`-t és az `app.js`-t újraindítás nélkül is átírhatod, elég frissíteni a böngészőt.
@@ -40,8 +42,8 @@ A Python csak adatot ad (`/api`), a kinézetet a `web/` mappa adja. A `style.css
 
 ## Első indítás és beállítás
 
-1. Másold le a `config.example.ini` fájlt `config.ini` néven, vagy egyszerűen indítsd el a programot: ha nincs `config.ini`, a program létrehozza a példából, és szól, hogy írd át.
-2. Nyisd meg a `config.ini` fájlt (Jegyzettömb is jó, mentsd UTF-8 kódolással), és írd át a nyomtatókat.
+1. Másold le a `config.example.ini` fájlt `config.ini` néven, vagy egyszerűen indítsd el a programot: ha nincs `config.ini`, a program létrehozza a példából, és szól, hogy nézd át.
+2. Nyisd meg a `config.ini` fájlt (Jegyzettömb is jó, mentsd UTF-8 kódolással), és szükség esetén írd át a közösségnevet.
 3. Indítsd el:
 
 ```powershell
@@ -49,6 +51,8 @@ python run.py
 ```
 
 Linuxon vagy macOS-en `python3 run.py`. Ezután nyisd meg a böngészőben: `http://localhost:8080`. A leállítás `Ctrl+C`.
+
+Az első indításkor **nincs nyomtató felvéve**: az admin tölti fel őket (lásd lent, "Nyomtatók kezelése").
 
 ### A config.ini beállításai
 
@@ -65,10 +69,46 @@ Linuxon vagy macOS-en `python3 run.py`. Ezután nyisd meg a böngészőben: `htt
 | `[history]` | `enabled` | Az előzmények mentése be (`yes`) vagy ki (`no`) (alapérték: `yes`) |
 | `[history]` | `keep_days` | Ennyi napig őrzi meg az adatokat, utána törli (alapérték: 365) |
 | `[history]` | `file` | Az adatbázisfájl neve a program mappájában (alapérték: `history.db`) |
-| `[printers]` | `Név = IP-cím` | Egy sor egy nyomtató, a megadott sorrendben jelennek meg |
+| `[storage]` | `printers_file` | A nyomtatók és az admin fiókok adatbázisa (alapérték: `printers.db`) |
+| `[admin]` | `trust_localhost` | `yes`: a futtató gépről (localhost) belépés nélkül lehet kezelni a nyomtatókat. `no`: mindenhonnan admin fiók kell (alapérték: `yes`) |
+| `[admin]` | `session_hours` | Ennyi óráig marad érvényes egy belépés (1-720, alapérték: 8) |
 | `[telegram]` | `token`, `chat_id` | Opcionális, lásd lent |
 
 A `;` és `#` jellel kezdődő sorok megjegyzések. Hibás érték esetén a program érthető hibaüzenettel áll le.
+
+## Nyomtatók kezelése
+
+A nyomtatók nem a `config.ini`-ben, hanem a `printers.db` adatbázisban vannak, és futás közben, újraindítás nélkül kezelhetők. Megnézni mindenki megnézheti őket; felvenni és törölni csak admin tud.
+
+**Weboldalon** (az oldal tetején az admin sáv):
+
+- **+ Nyomtató hozzáadása**: név és IP-cím (vagy gépnév). A felvétel után azonnal lekérdezi a nyomtatót.
+- **+ Több egyszerre**: soronként egy nyomtató, `Név = IP-cím` formában (`;` vagy tabulátor is jó, így Excelből is bemásolható). A hibás vagy már létező sorokat kihagyja, a többit felveszi, és megmutatja, melyik sor miért maradt ki; csak ezek maradnak a mezőben.
+- **Törlés** a kártyán: megerősítés után törli a nyomtatót. A régi eseményei megmaradnak az Előzményekben, de csak az éppen kiválasztott időszakon belül látszanak (két hete törölt nyomtató a 7 napos nézetben már nincs ott, a 30 naposban még igen; ilyenkor "(törölve)" jelzést kap). Ugyanazzal a névvel újra felvehető.
+
+**Parancssorból** (például GUI nélküli Linux szerveren, a program közben is futhat):
+
+```bash
+python3 run.py printers list
+python3 run.py printers add Iroda-1 192.168.1.11
+python3 run.py printers remove Iroda-1
+python3 run.py printers import lista.txt      # soronként: Név = IP-cím
+```
+
+**Ki kezelhet?** Két mód együtt működik:
+
+1. **A futtató gépről (localhost)** nem kell belépni. Ez csak akkor érvényes, ha a böngésző a `localhost`, `127.0.0.1` vagy `[::1]` címen nyitja meg az oldalt, és a kérés nem proxyn keresztül érkezik.
+2. **Más gépekről** admin fiókkal kell belépni (az oldal tetején "Belépés (admin)"). A belépés `session_hours` óráig érvényes, tehát nem kell minden felvételnél jelszót írni. Az admin fiókot a futtató gépen, parancssorból lehet létrehozni, így GUI nélkül is megy:
+
+```bash
+python3 run.py admin set NÉV      # létrehozás vagy jelszócsere (kétszer kéri a jelszót, nem látszik gépeléskor)
+python3 run.py admin list
+python3 run.py admin remove NÉV
+```
+
+A jelszó legalább 8 karakter. A jelszócsere vagy a fiók törlése minden belépését érvényteleníti. Öt hibás belépés után az adott gépről 10 percig nem lehet próbálkozni.
+
+Ha a régi, `config.ini`-ben lévő `[printers]` listát át akarod venni: `python3 run.py import-printers`, utána a szakaszt törölheted.
 
 ## Gyors teszt egy nyomtatóra
 
@@ -166,11 +206,11 @@ A projekt mappájából:
 python -m unittest -v
 ```
 
-A tesztek egy hamis (helyi) SNMP-nyomtatót indítanak, és ellenőrzik a lekérdezést, a beállítások beolvasását, az értesítések logikáját, az előzmények mentését (események kezdete és vége, újraindítás, szünet-észlelés, takarítás, párhuzamos írás) és a webszervert is (többek között azt, hogy a `web/` mappán kívüli fájlok nem érhetők el). Az előzményeknél ideiglenes adatbázist használnak, a valódi `history.db` fájlodhoz nem nyúlnak. Nincs szükségük valódi nyomtatóra vagy hálózatra, és nem módosítanak semmit.
+A tesztek egy hamis (helyi) SNMP-nyomtatót indítanak, és ellenőrzik a lekérdezést, a nyomtatók felvételét és törlését (webről és parancssorból), az admin belépést (jelszókivonat, lejárat, hibás próbálkozások korlátozása, localhost-szabály, CSRF/eredet-ellenőrzés), a beállítások beolvasását, az értesítések logikáját, az előzmények mentését (események kezdete és vége, újraindítás, szünet-észlelés, takarítás, párhuzamos írás) és a webszervert is (többek között azt, hogy a `web/` mappán kívüli fájlok nem érhetők el). Az előzményeknél ideiglenes adatbázist használnak, a valódi `history.db` fájlodhoz nem nyúlnak. Nincs szükségük valódi nyomtatóra vagy hálózatra, és nem módosítanak semmit.
 
 ## Frissítés
 
-A program frissítéséhez cseréld le a mappa tartalmát az újra, **kivéve a `config.ini` és a `history.db` fájlt**. Az előbbi a te beállításaidat, az utóbbi az összegyűjtött előzményeket tartalmazza. Így nem kell újra beírni a nyomtatókat, és az előzmények sem vesznek el. Frissítés előtt állítsd le a programot.
+A program frissítéséhez cseréld le a mappa tartalmát az újra, **kivéve a `config.ini`, a `history.db` és a `printers.db` fájlt**. Az első a te beállításaidat, a második az összegyűjtött előzményeket, a harmadik a nyomtatókat és az admin fiókokat tartalmazza. Így nem kell újra beírni semmit, és az előzmények sem vesznek el. Frissítés előtt állítsd le a programot.
 
 ## Futtatás Linux szerveren
 
@@ -181,7 +221,14 @@ sudo apt update
 sudo apt install python3
 ```
 
-Helyezd a mappát például az `/opt/printer-monitor` könyvtárba, hozd létre benne a `config.ini` fájlt, és ha más gépekről is el kell érni az oldalt, állítsd a `host` értékét `0.0.0.0`-ra. Kézi próba:
+Helyezd a mappát például az `/opt/printer-monitor` könyvtárba, hozd létre benne a `config.ini` fájlt, és ha más gépekről is el kell érni az oldalt, állítsd a `host` értékét `0.0.0.0`-ra. Mivel a szerveren nincs böngésző, a nyomtatókat és az admin fiókot parancssorból veheted fel (a program futása közben is):
+
+```bash
+python3 run.py admin set NÉV                   # admin fiók a távoli (böngészős) kezeléshez
+python3 run.py printers import lista.txt       # a nyomtatólista soronként: Név = IP-cím
+```
+
+Kézi próba:
 
 ```bash
 cd /opt/printer-monitor
@@ -235,7 +282,10 @@ A Telegram-adatokat megadhatod a `config.ini`-ben, vagy az opcionális `/etc/pri
 
 - **A `config.ini` és a `history.db` ne kerüljön nyilvános tárolóba.** A `config.ini` a belső IP-címeket és a Telegram-tokent, a `history.db` a nyomtatók nevét, hibaüzeneteit és az eseményeik idejét tartalmazza. A mellékelt `.gitignore` mindkettőt kizárja a Git használatakor; csak a `config.example.ini` kerül be.
 - Az SNMP v2c nem titkosítja a forgalmat, a közösségnevet szövegesen küldi. Csak megbízható belső hálózaton használd, és ahol lehet, ne hagyd az alapértelmezett `public` értéket.
-- A webkiszolgáló alapból csak a helyi gépről érhető el (`127.0.0.1`). Ha a `host` értékét `0.0.0.0`-ra állítod, a felület a hálózaton bárkinek elérhető lesz, mert nincs hitelesítés vagy HTTPS. Ilyenkor tűzfallal korlátozd a portot a megbízható hálózatra. A webszerver csak olvasni enged: nyomtatót nem tud vezérelni.
+- A webkiszolgáló alapból csak a helyi gépről érhető el (`127.0.0.1`). Ha a `host` értékét `0.0.0.0`-ra állítod, az oldalt a hálózaton bárki megnézheti (nyomtatók állapota, előzmények), a nyomtatólistát viszont csak a helyi gépről vagy admin fiókkal lehet módosítani. A webszerver nyomtatót nem tud vezérelni.
+- **Nincs HTTPS.** Az admin jelszó a belépéskor titkosítatlanul megy át a hálózaton, ezért csak megbízható belső hálózaton használd, és ne használd máshol is ugyanazt a jelszót. A jelszót a program csak sózott PBKDF2 kivonatként tárolja a `printers.db`-ben.
+- **Fordított proxy (nginx, Apache) ugyanazon a gépen:** a proxy a program felé helyi címről érkezik, ezért a "localhost belépés nélkül" szabály a távoli felhasználókra is érvényes lehet. Ha proxy mögé teszed, állítsd be: `[admin] trust_localhost = no`.
+- **A `printers.db` ne kerüljön nyilvános tárolóba.** Az admin jelszókivonatokat és a nyomtatók címeit tartalmazza. A `.gitignore`-ban szerepeljen a `printers.db` és a `printers.db-journal` is.
 - A nyomtatókat a program párhuzamosan kérdezi le (egyszerre legfeljebb 8-at), így egy elérhetetlen nyomtató nem lassítja a többit. Az offline nyomtató lekérdezése kb. 4 másodpercig vár az időtúllépésre.
 - A 30 másodperces lekérdezés a hálózatot és a nyomtatókat gyakorlatilag nem terheli (nyomtatónként kb. 50-60 apró UDP csomag).
 - Hibaként a program a nyomtató riasztási tábláját (kritikus és figyelmeztető szint) jeleníti meg. Az információs szintű üzeneteket kihagyja. Ha egy nyomtató egy hibát (például nyomtatófej-hibát) nem ebben a táblában jelez, a `test` parancs kimenetéből derül ki, hol jelenik meg.
