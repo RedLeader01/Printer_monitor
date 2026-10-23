@@ -90,8 +90,8 @@ A nyomtatók nem a `config.ini`-ben, hanem a `printers.db` adatbázisban vannak,
 
 ```bash
 python3 run.py printers list
-python3 run.py printers add HAT-KO-1 10.56.63.1
-python3 run.py printers remove HAT-KO-1
+python3 run.py printers add Iroda-1 192.168.1.11
+python3 run.py printers remove Iroda-1
 python3 run.py printers import lista.txt      # soronként: Név = IP-cím
 ```
 

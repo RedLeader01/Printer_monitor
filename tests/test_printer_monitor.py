@@ -127,12 +127,12 @@ class ConfigTests(unittest.TestCase):
     def test_valid_config_keeps_order_and_names(self):
         cfg = self._load("[general]\ncommunity = titok\npoll_seconds = 15\nwarn_pct = 25\n"
                          "[web]\nport = 9000\n"
-                         "[printers]\nHAT-KO-4 = 10.0.0.4   # megjegyzés\nHAT-BU-1 = 10.0.0.1\n")
+                         "[printers]\nIroda-4 = 10.0.0.4   # megjegyzés\nIroda-1 = 10.0.0.1\n")
         self.assertEqual(cfg.community, "titok")
         self.assertEqual(cfg.poll_seconds, 15)
         self.assertEqual(cfg.warn_pct, 25)
         self.assertEqual(cfg.port, 9000)
-        self.assertEqual(cfg.printers, [("HAT-KO-4", "10.0.0.4"), ("HAT-BU-1", "10.0.0.1")])
+        self.assertEqual(cfg.printers, [("Iroda-4", "10.0.0.4"), ("Iroda-1", "10.0.0.1")])
 
     def test_notepad_bom_is_accepted(self):
         cfg = self._load("[printers]\nA = 10.0.0.1\n", encoding="utf-8-sig")

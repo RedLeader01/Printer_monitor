@@ -326,7 +326,7 @@ class LocalAdminTests(WebManageBase):
 
     def test_bulk_30_printers(self):
         self.csrf = self.req("GET", "/api/me")[1]["csrf"]
-        text = "\n".join("GEP-%02d = 10.56.63.%d" % (i, i) for i in range(1, 31))
+        text = "\n".join("GEP-%02d = 192.168.1.%d" % (i, i) for i in range(1, 31))
         st, data, _ = self.req("POST", "/api/printers/bulk", {"text": text})
         self.assertEqual((st, len(data["added"]), data["errors"]), (200, 30, []))
 

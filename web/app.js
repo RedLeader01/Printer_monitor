@@ -106,9 +106,9 @@ function paintMessage() {
 }
 
 function addForm() {
-  const name = h("input", { type: "text", name: "name", placeholder: "pl. HAT-KO-4", maxlength: "40",
+  const name = h("input", { type: "text", name: "name", placeholder: "pl. Iroda-4", maxlength: "40",
                             required: true, autocomplete: "off" });
-  const ip = h("input", { type: "text", name: "ip", placeholder: "pl. 10.56.63.4", maxlength: "253",
+  const ip = h("input", { type: "text", name: "ip", placeholder: "pl. 192.168.1.14", maxlength: "253",
                           required: true, autocomplete: "off" });
   const btn = h("button", { type: "submit", class: "btn primary" }, "Hozzáadás");
   const form = h("form", { class: "adminform" },
@@ -133,7 +133,7 @@ function addForm() {
 
 function bulkForm() {
   const ta = h("textarea", { name: "text", rows: "8", spellcheck: "false", required: true,
-    placeholder: "Soronként egy nyomtató, pl.:\nHAT-KO-1 = 10.56.63.1\nHAT-KO-2 = 10.56.63.2\n(Excelből bemásolva is jó: név, tab, IP)" });
+    placeholder: "Soronként egy nyomtató, pl.:\nIroda-1 = 192.168.1.11\nIroda-2 = 192.168.1.12\n(Excelből bemásolva is jó: név, tab, IP)" });
   const btn = h("button", { type: "submit", class: "btn primary" }, "Mind felvétele");
   const form = h("form", { class: "adminform bulk" }, h("label", null, "Nyomtatók (Név = IP-cím)", ta), btn);
   form.addEventListener("submit", async (ev) => {
