@@ -50,10 +50,17 @@ const statusEl = document.getElementById("status");
 const summaryEl = document.getElementById("summary");
 const appEl = document.getElementById("app");
 
-function fillPrinters(names) {
+// A törölt nyomtatók neve is a listában marad (az időszakon belüli eseményeik miatt), "(törölve)" jelzéssel.
+let removedSet = new Set();
+
+function fillPrinters(names, removed) {
+  removedSet = new Set(removed || []);
   const known = new Set([...printerSelect.options].map((o) => o.value));
   for (const n of names) {
     if (!known.has(n)) printerSelect.append(h("option", { value: n }, n));
+  }
+  for (const o of printerSelect.options) {
+    if (o.value) o.textContent = o.value + (removedSet.has(o.value) ? " (törölve)" : "");
   }
 }
 
@@ -63,7 +70,8 @@ function renderRow(e, now) {
   const duration = fmtDuration((running ? now : e.ended) - e.started);
   return h("tr", { class: running ? "open" : null },
     h("td", null, fmtTime(e.started)),
-    h("td", null, e.printer === "*" ? "Minden nyomtató" : e.printer),
+    h("td", null, e.printer === "*" ? "Minden nyomtató" : e.printer,
+      removedSet.has(e.printer) ? h("span", { class: "removed" }, " (törölve)") : null),
     h("td", null, h("span", { class: "badge " + kind.cls }, kind.label)),
     h("td", null, e.detail),
     h("td", null, running ? "tart még" : fmtTime(e.ended)),
@@ -71,7 +79,7 @@ function renderRow(e, now) {
 }
 
 function render(data) {
-  fillPrinters(data.printers || []);
+  fillPrinters(data.printers || [], data.removed || []);
   appEl.textContent = "";
   if (!data.enabled) {
     summaryEl.textContent = "";
